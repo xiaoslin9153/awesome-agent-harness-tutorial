@@ -22,15 +22,20 @@ status: completed
 7. 已根据两项审查修正公开章节和 C02 证据索引，并将两个审查结果记录到 Front Matter。
 8. 已更新 `tutorial/zh-CN/TOC.md` 的 C-02 状态和 `docs/product/progress-tracker.md` 中 K03、FR02、FD02、FP02 条目。
 9. 正式验证通过：`cd site && npm run check:links && npm run build`。
+10. 提交 `6a8c4e9` 已推送成功，远端 `refs/heads/main` 指向同一 SHA；Deploy Pages run `32556630093` 成功。
+11. Deploy Agent 检查根路径和 `/zh-CN/01-core-concepts/agent-run-lifecycle/` 均返回 HTTP 200，且分别包含预期入口、标题和 `assistant/message`。
+12. 本地 `git push` 更新远端跟踪引用时因 `.git/refs/remotes/origin/main.lock` 出现一次沙箱写入权限错误；远端 SHA 与本地 HEAD 已用 `git ls-remote` 核对一致。
 
 ## 会话结果与检查清单
 
-C-02 已完成：公开章节把一次 Run 拆成准备、初始化、请求、推理、分支和收束六类职责，并用三家固定快照说明理想生命周期如何映射到真实调用链。创建或修改了公开章节、TOC、C02 三份证据索引、本会话记录和进度表。替代方案是把工具治理写成三家共同机制，但源码审查证明检查点不同，因此改为理想模型加逐家差异。本地链接检查和构建均通过；部署检查将在推送后执行。
+C-02 已完成：公开章节把一次 Run 拆成准备、初始化、请求、推理、分支和收束六类职责，并用三家固定快照说明理想生命周期如何映射到真实调用链。创建或修改了公开章节、TOC、C02 三份证据索引、本会话记录和进度表。替代方案是把工具治理写成三家共同机制，但源码审查证明检查点不同，因此改为理想模型加逐家差异。本地链接检查、构建和线上部署检查均通过。
 
 - 证据：`docs/comparisons/evidence/C02-reasonix.md`、`docs/comparisons/evidence/C02-deepseek-harness.md`、`docs/comparisons/evidence/C02-pi.md`。
 - 验证：`cd site && npm run check:links && npm run build`。
+- 部署检查：workflow success；`/` HTTP 200；`/zh-CN/01-core-concepts/agent-run-lifecycle/` HTTP 200 且包含标题与关键事件名。
+- 环境备注：本地 `origin/main` 跟踪引用显示 ahead 1 是沙箱锁导致的更新失败，不是推送失败。
 - 未解决问题：Reasonix 批量执行细节、DeepSeek Harness 完整启动装配、Pi server harness 差异分别留待 M-04、架构章节和框架章节。
-- 下一个具体动作：推送后执行 Deploy Agent 检查，随后进入 C-03《Session、Turn 与状态模型》。
+- 下一个具体动作：进入 C-03《Session、Turn 与状态模型》。
 
 ## 范围与假设
 
@@ -51,4 +56,4 @@ C-02 已完成：公开章节把一次 Run 拆成准备、初始化、请求、�
 
 ## 下一步
 
-正式运行链接检查和站点构建；通过后更新 TOC 与进度表，执行最小提交、推送和部署检查。
+C-02 已完成。下一小节是依赖它的 C-03。
