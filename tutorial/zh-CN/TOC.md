@@ -9,8 +9,14 @@ translations:
 review:
   polish:
     agent: pending
+    date: null
+    verdict: pending
+    summary: 目录为导航元数据，随每批章节状态同步更新。
   implementation:
     agent: pending
+    date: null
+    verdict: pending
+    summary: 最终发布前统一核对目录链接与章节状态。
 ---
 
 # 教材目录
@@ -20,7 +26,7 @@ review:
 | ID | 标题 | 文件路径 | 依赖 | 状态 |
 | --- | --- | --- | --- | --- |
 | C-01 | [Agent、Harness 与 Runtime 的边界](./01-core-concepts/agent-vs-harness.md) | `01-core-concepts/agent-vs-harness.md` | 无 | ✅ 已完成 |
-| C-02 | 一次 Agent Run 的完整生命周期 | `01-core-concepts/agent-run-lifecycle.md` | C-01 | ✅ 已完成 |
+| C-02 | [一次 Agent Run 的完整生命周期](./01-core-concepts/agent-run-lifecycle.md) | `01-core-concepts/agent-run-lifecycle.md` | C-01 | ✅ 已完成 |
 | C-03 | Session、Turn 与状态模型 | `01-core-concepts/session-and-state.md` | C-02 | ⬜ 未开始 |
 | C-04 | 事件模型与流式输出 | `01-core-concepts/events-and-streaming.md` | C-02 | ⬜ 未开始 |
 
@@ -104,7 +110,7 @@ review:
 
 | ID | 标题 | 文件路径 | 依赖 | 状态 |
 | --- | --- | --- | --- | --- |
-| G-01 | [术语表](./09-glossary/glossary.md) | `09-glossary/glossary.md` | 无 | ✅ 已完成 |
+| G-01 | [术语表](./09-glossary/glossary.md) | `09-glossary/glossary.md` | 无 | 🟡 待终审 |
 
 ## 写作顺序
 

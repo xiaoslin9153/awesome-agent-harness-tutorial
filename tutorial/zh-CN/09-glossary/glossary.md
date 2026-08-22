@@ -8,9 +8,16 @@ translations:
   en: null
 review:
   polish:
-    agent: pending
+    agent: polish-agent
+    date: 2026-08-22
+    verdict: pass
+    summary: 已核对核心术语、中文优先策略和中英对照结构。
   implementation:
-    agent: pending
+    agent: implementation-review-agent
+    date: null
+    verdict: pending
+    evidence_version: Reasonix aa82b2f; DeepSeek Harness b150a55; Pi c49906e
+    summary: 待最终事实审查核对全部术语与源码语义映射。
 ---
 
 # 术语表
