@@ -114,3 +114,15 @@
 ## 下一步
 
 确定 Reasonix、DeepSeek Harness 和 Pi 的标准仓库或产品来源、版本和 commit。然后创建第一篇中文教材《一次 Agent Run 的完整生命周期》，并应用 `tutorial/language-interface.md` 的 Front Matter 规范。
+
+## 后续修订：发布平台决策
+
+### 决策
+
+公开教材使用 GitHub Pages 发布，不使用 GitBook。原因：
+
+1. 源码、教材内容、Issue 讨论和 CI 部署保留在同一 GitHub 工作流中。
+2. GitHub Actions 可以直接从 `tutorial/` 构建并发布静态站点。
+3. 避免第三方托管平台的同步、导出、权限和长期锁定问题。
+4. 已配置的 `xiaoslin9153` SSH 推送流程可以直接服务教材发布。
+5. 后续可绑定自定义域名，不依赖 GitBook 品牌路径。

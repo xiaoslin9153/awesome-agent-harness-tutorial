@@ -154,11 +154,12 @@ tutorial/
 - 建设分类面试题和答案链。
 - 补充调试手册。
 
-### 阶段 6：网站发布
+### 阶段 6：GitHub Pages 发布
 
-- 选择 Astro Starlight 或 Docusaurus。
-- 从 Markdown 生成站点。
-- 配置导航、搜索、版本和部署。
+- 使用 GitHub Pages 作为发布平台，不使用 GitBook。
+- 从 Astro Starlight 和 Docusaurus 中选择静态站点生成器；选择标准是 Markdown 集成、多语言路由、搜索、维护成本和 GitHub Actions 支持度。
+- 从 `tutorial/` 生成站点。
+- 配置导航、搜索、版本、自定义域名和 GitHub Actions 部署。
 
 ## 成功标准
 
@@ -167,7 +168,7 @@ tutorial/
 3. 每个核心机制至少有一个可复现实验，或明确说明为什么当前无法本地运行。
 4. 每道面试题都包含推理、追问和常见错误。
 5. 会话记录能让工作无上下文损失地继续。
-6. 公开教材能以最小转换发布为网站。
+6. 公开教材能以最小转换发布到 GitHub Pages。
 7. 中文是默认阅读语言；其他语言通过稳定接口扩展。
 
 ## 开放问题
