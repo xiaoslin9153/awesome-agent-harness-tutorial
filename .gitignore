@@ -9,3 +9,6 @@ coverage/
 # Local research material that must not be committed accidentally.
 private/
 secrets/
+
+# 第三方框架源码只用于本地分析，不提交到本仓库。
+external/

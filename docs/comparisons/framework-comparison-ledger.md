@@ -24,9 +24,9 @@
 
 | 框架 | 标准对象 | 版本 / commit | 访问日期 | 状态 | 备注 |
 | --- | --- | --- | --- | --- | --- |
-| Reasonix | 未确定 | 未确定 | 未确定 | 待处理 | 需要选择具体产品、仓库和版本。 |
-| DeepSeek Harness（`dsh`） | 未确定 | 未确定 | 未确定 | 待处理 | 需要选择仓库、发布版本和协议版本。 |
-| Pi | 未确定 | 未确定 | 未确定 | 待处理 | 需要选择实现和版本。 |
+| Reasonix | `esengine/DeepSeek-Reasonix`，本地路径 `external/DeepSeek-Reasonix` | `aa82b2f94f3dbfccad544ac858c482533e00327f`，浅克隆分支 `main-v2` | 2026-08-22 | 已拉取，待拆解 | Go / Wails / TypeScript 桌面与 CLI 形态；文档覆盖 Checkpoint、Recovery、Session、Sub-agent 和 Tool Approval。 |
+| DeepSeek Harness（`dsh`） | `deepseek-ai/deepseek-harness`，本地路径 `external/deepseek-harness` | `b150a551b8d465e31e418e1b2eaf5e79bbb7d28e`，浅克隆分支 `master` | 2026-08-22 | 已拉取，待拆解 | Monorepo 包含 Protocol / Server / Session / Tools / Sandbox / MCP / Hooks / Jobs 等模块。 |
+| Pi | `earendil-works/pi`，本地路径 `external/pi` | `c49906ec77788625aacbdc53ebca6fbe65bd20f5`，浅克隆分支 `main` | 2026-08-22 | 已拉取，待拆解 | TypeScript monorepo，包含 Agent / AI / Protocol / Coding Agent / Client / TUI / Telemetry 等包。 |
 
 ## 对比维度
 
@@ -60,10 +60,17 @@
 
 ## 当前结论
 
-尚无已验证的框架级结论。第一项分析任务是确定每个框架的标准对象和版本。
+三个标准对象已确定并完成浅克隆。尚无机制级结论。
+
+已验证事实：
+
+1. Reasonix 本地快照包含 5,175 个文件，其中 Markdown 文档 242 个，主要源码文件约 4,319 个。
+2. DeepSeek Harness 本地快照包含 7,895 个文件，其中 Markdown 文档 2,499 个，主要源码文件约 2,763 个。
+3. Pi 本地快照包含 1,391 个文件，其中 Markdown 文档 97 个，主要源码文件约 1,157 个。
 
 ## 决策记录
 
 | 日期 | 决策 | 原因 | 影响 |
 | --- | --- | --- | --- |
 | 2026-08-22 | 建立 25 个稳定对比维度。 | 避免后续框架笔记退化为互不兼容的功能清单。 | 后续所有分析必须映射到 C01-C25。 |
+| 2026-08-22 | 确定三家仓库和本地快照 commit。 | 固定分析对象，避免主仓更新后结论漂移。 | 后续源码引用必须绑定本表中的 commit 或显式声明新版本。 |
