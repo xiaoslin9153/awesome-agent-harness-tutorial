@@ -42,7 +42,7 @@ review:
 | M-06 | [审批模型](./02-harness-mechanics/approval.md) | `02-harness-mechanics/approval.md` | M-04 | 🟡 Draft / Polish 已通过；Implementation Review 待批量审查 |
 | M-07 | [Sandbox 与权限](./02-harness-mechanics/sandbox.md) | `02-harness-mechanics/sandbox.md` | M-06 | 🟡 Draft / Polish 已通过；Implementation Review 待批量审查 |
 | M-08 | [Retry 与幂等](./02-harness-mechanics/retry-idempotency.md) | `02-harness-mechanics/retry-idempotency.md` | M-04 | 🟡 Draft / Polish 已通过；Implementation Review 待批量审查 |
-| M-09 | Timeout 与取消 | `02-harness-mechanics/timeout-cancellation.md` | M-08 | ⬜ 未开始 |
+| M-09 | [Timeout 与取消](./02-harness-mechanics/timeout-cancellation.md) | `02-harness-mechanics/timeout-cancellation.md` | M-08 | 🟡 Draft / Polish 已通过；Implementation Review 待批量审查 |
 | M-10 | Checkpoint 与 Resume | `02-harness-mechanics/checkpoint-resume.md` | C-03 | ⬜ 未开始 |
 | M-11 | Persistence | `02-harness-mechanics/persistence.md` | M-10 | ⬜ 未开始 |
 | M-12 | Observability 与 Replay | `02-harness-mechanics/observability.md` | M-11 | ⬜ 未开始 |
