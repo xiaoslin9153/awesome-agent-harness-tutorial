@@ -34,7 +34,7 @@ review:
 
 | ID | 标题 | 文件路径 | 依赖 | 状态 |
 | --- | --- | --- | --- | --- |
-| M-01 | Context 组装与分层 | `02-harness-mechanics/context-assembly.md` | C-03 | ⬜ 未开始 |
+| M-01 | [Context 组装与分层](./02-harness-mechanics/context-assembly.md) | `02-harness-mechanics/context-assembly.md` | C-03 | 🟡 Draft / Polish 已通过；Implementation Review 待批量审查 |
 | M-02 | Context 压缩与截断 | `02-harness-mechanics/context-compression.md` | M-01 | ⬜ 未开始 |
 | M-03 | Tool Schema 与调用协议 | `02-harness-mechanics/tool-schema.md` | C-02 | ⬜ 未开始 |
 | M-04 | Tool 执行与副作用 | `02-harness-mechanics/tool-execution.md` | M-03 | ⬜ 未开始 |
