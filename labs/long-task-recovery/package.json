@@ -1,0 +1,9 @@
+{
+  "name": "long-task-recovery-lab",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node src/run.mjs",
+    "test": "node test/long-task-recovery.test.mjs"
+  }
+}

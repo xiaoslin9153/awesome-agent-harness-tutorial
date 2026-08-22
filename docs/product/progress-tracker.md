@@ -106,6 +106,7 @@
 | K41 | 撰写 Context 膨胀实验 | `进行中` | `tutorial/zh-CN/05-labs/context-bloat.md` 已完成 Draft 与 Polish；`labs/context-bloat` 比较 naive 与 bounded 投影，测试通过且两套链接检查通过。Implementation Review 待批量审查。 | 2026-08-23 |
 | K42 | 撰写 Tool 重试副作用实验 | `进行中` | `tutorial/zh-CN/05-labs/retry-side-effects.md` 已完成 Draft 与 Polish；`labs/retry-side-effects` 覆盖无键重试、幂等重放和状态未知升级，测试通过。Implementation Review 待批量审查。 | 2026-08-23 |
 | K43 | 撰写审批拒绝恢复实验 | `进行中` | `tutorial/zh-CN/05-labs/approval-rejection.md` 已完成 Draft 与 Polish；`labs/approval-rejection` 覆盖批准、拒绝、替代申请和未决失败关闭，测试通过。Implementation Review 待批量审查。 | 2026-08-23 |
+| K44 | 撰写长任务中断恢复案例 | `进行中` | `tutorial/zh-CN/06-case-studies/long-task-recovery.md` 已完成 Draft 与 Polish；`labs/long-task-recovery` 比较无状态重跑、检查点恢复和环境漂移拒绝，测试通过。Implementation Review 待批量审查。 | 2026-08-23 |
 
 ## P2：Harness 机制教材
 
