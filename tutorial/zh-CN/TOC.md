@@ -48,7 +48,7 @@ review:
 | M-12 | [Observability 与 Replay](./02-harness-mechanics/observability.md) | `02-harness-mechanics/observability.md` | M-11 | 🟡 Draft / Polish 已通过；Implementation Review 待批量审查 |
 | M-13 | [Memory 与工作区](./02-harness-mechanics/memory-workspace.md) | `02-harness-mechanics/memory-workspace.md` | M-11 | 🟡 Draft / Polish 已通过；Implementation Review 待批量审查 |
 | M-14 | [Sub-agent 与并发](./02-harness-mechanics/subagent-concurrency.md) | `02-harness-mechanics/subagent-concurrency.md` | M-04 | 🟡 Draft / Polish 已通过；Implementation Review 待批量审查 |
-| M-15 | 成本与延迟 | `02-harness-mechanics/cost-latency.md` | M-14 | ⬜ 未开始 |
+| M-15 | [成本与延迟](./02-harness-mechanics/cost-latency.md) | `02-harness-mechanics/cost-latency.md` | M-14 | 🟡 Draft / Polish 已通过；Implementation Review 待批量审查 |
 | M-16 | Prompt Injection 与工具安全 | `02-harness-mechanics/prompt-injection.md` | M-07 | ⬜ 未开始 |
 
 ## 第三章：框架拆解

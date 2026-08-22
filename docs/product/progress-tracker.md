@@ -85,6 +85,7 @@
 | K20 | 撰写 Observability 与 Replay | `进行中` | `tutorial/zh-CN/02-harness-mechanics/observability.md` 已完成 Draft 与 Polish，并保留三家框架待审锚点。 | 2026-08-22 |
 | K21 | 撰写 Memory 与工作区 | `进行中` | `tutorial/zh-CN/02-harness-mechanics/memory-workspace.md` 已完成 Draft 与 Polish，并保留三家框架待审锚点。 | 2026-08-22 |
 | K22 | 撰写 Sub-agent 与并发 | `进行中` | `tutorial/zh-CN/02-harness-mechanics/subagent-concurrency.md` 已完成 Draft 与 Polish，并保留三家框架待审锚点。 | 2026-08-22 |
+| K23 | 撰写成本与延迟 | `进行中` | `tutorial/zh-CN/02-harness-mechanics/cost-latency.md` 已完成 Draft 与 Polish，并保留三家框架待审锚点。 | 2026-08-22 |
 
 ## P2：Harness 机制教材
 
