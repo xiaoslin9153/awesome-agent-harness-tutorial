@@ -78,6 +78,7 @@
 | K13 | 撰写 Tool 结果处理与截断 | `进行中` | `tutorial/zh-CN/02-harness-mechanics/tool-results.md` 已完成 Draft 与 Polish，并保留三家框架待审锚点。 | 2026-08-22 |
 | K14 | 撰写审批模型 | `进行中` | `tutorial/zh-CN/02-harness-mechanics/approval.md` 已完成 Draft 与 Polish，并保留三家框架待审锚点。 | 2026-08-22 |
 | K15 | 撰写 Sandbox 与权限 | `进行中` | `tutorial/zh-CN/02-harness-mechanics/sandbox.md` 已完成 Draft 与 Polish，并保留三家框架待审锚点。 | 2026-08-22 |
+| K16 | 撰写 Retry 与幂等 | `进行中` | `tutorial/zh-CN/02-harness-mechanics/retry-idempotency.md` 已完成 Draft 与 Polish，并保留三家框架待审锚点。 | 2026-08-22 |
 
 ## P2：Harness 机制教材
 
