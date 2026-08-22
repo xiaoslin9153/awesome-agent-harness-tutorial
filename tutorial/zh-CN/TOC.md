@@ -63,7 +63,7 @@ review:
 | F-D3 | [DeepSeek Harness 工具与沙箱](./03-frameworks/deepseek-harness/tools-sandbox.md) | `03-frameworks/deepseek-harness/tools-sandbox.md` | F-D2 | 🟡 Draft / Polish 已通过；Implementation Review 待批量审查 |
 | F-P1 | [Pi 架构总览](./03-frameworks/pi/overview.md) | `03-frameworks/pi/overview.md` | 第二章 | 🟡 Draft / Polish 已通过；Implementation Review 待批量审查 |
 | F-P2 | [Pi Run 生命周期](./03-frameworks/pi/run-lifecycle.md) | `03-frameworks/pi/run-lifecycle.md` | F-P1 | 🟡 Draft / Polish 已通过；Implementation Review 待批量审查 |
-| F-P3 | Pi 工具与容器化 | `03-frameworks/pi/tools-containerization.md` | F-P2 | ⬜ 未开始 |
+| F-P3 | [Pi 工具与容器化](./03-frameworks/pi/tools-containerization.md) | `03-frameworks/pi/tools-containerization.md` | F-P2 | 🟡 Draft / Polish 已通过；Implementation Review 待批量审查 |
 
 ## 第四章：横向对比
 
