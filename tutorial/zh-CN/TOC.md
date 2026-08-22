@@ -64,7 +64,7 @@ flowchart LR
 
 | ID | 标题 | 文件路径 | 依赖 | 继承问题 | 解决矛盾 / 核心不变量 | 遗留问题 | 状态 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| M-01 | [Context 组装与分层](./02-harness-mechanics/context-assembly.md) | `02-harness-mechanics/context-assembly.md` | C-04 | 哪些事实应该进入下一次模型请求？ | 来源、优先级和引用关系可追踪；上下文是投影，不替代权威日志。 | 上下文超过预算时牺牲什么？ | 🟡 Draft / Polish 已通过；Implementation Review 待批量审查 |
+| M-01 | [Context 组装与分层](./02-harness-mechanics/context-assembly.md) | `02-harness-mechanics/context-assembly.md` | C-04 | 哪些事实应该进入下一次模型请求？ | 来源、优先级和引用关系可追踪；上下文是投影，不替代权威日志。 | 上下文超过预算时牺牲什么？ | 🟡 已按 v0.3 重写并通过 Polish / Implementation 自检；Implementation Review 待批量终审 |
 | M-02 | [Context 压缩与截断](./02-harness-mechanics/context-compression.md) | `02-harness-mechanics/context-compression.md` | M-01 | 如何减少 token 而不破坏任务前提？ | 关键约束、未决副作用和因果链不得被静默删除。 | 模型如何可靠地发现并调用外部能力？ | 🟡 Draft / Polish 已通过；Implementation Review 待批量审查 |
 | M-03 | [Tool Schema 与调用协议](./02-harness-mechanics/tool-schema.md) | `02-harness-mechanics/tool-schema.md` | M-02 | 能力如何被模型理解且不被误解？ | Schema 是契约：名称、参数、返回和错误语义必须一致。 | 通过校验的调用为什么仍可能造成危险副作用？ | 🟡 Draft / Polish 已通过；Implementation Review 待批量审查 |
 | M-04 | [Tool 执行与副作用](./02-harness-mechanics/tool-execution.md) | `02-harness-mechanics/tool-execution.md` | M-03 | 如何把模型意图转成受控动作？ | 执行前有授权，执行中有归属，执行后结果可审计。 | 大输出、畸形输出和失败输出如何回到模型？ | 🟡 Draft / Polish 已通过；Implementation Review 待批量审查 |
