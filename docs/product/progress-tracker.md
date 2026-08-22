@@ -91,6 +91,7 @@
 | K26 | 撰写 Reasonix Run 生命周期 | `进行中` | `tutorial/zh-CN/03-frameworks/reasonix/run-lifecycle.md` 已完成 Draft 与 Polish，覆盖采样提交边界与恢复语义。 | 2026-08-22 |
 | K27 | 撰写 Reasonix 工具与审批 | `进行中` | `tutorial/zh-CN/03-frameworks/reasonix/tools-approval.md` 已完成 Draft 与 Polish，覆盖工具治理与沙箱审批链路。 | 2026-08-22 |
 | K28 | 撰写 DeepSeek Harness 架构总览 | `进行中` | `tutorial/zh-CN/03-frameworks/deepseek-harness/overview.md` 已完成 Draft 与 Polish，覆盖框架深拆必备结构。 | 2026-08-22 |
+| K29 | 撰写 DeepSeek Harness Run 生命周期 | `进行中` | `tutorial/zh-CN/03-frameworks/deepseek-harness/run-lifecycle.md` 已完成 Draft 与 Polish，覆盖 Turn/Step 与流式事件语义。 | 2026-08-22 |
 
 ## P2：Harness 机制教材
 
