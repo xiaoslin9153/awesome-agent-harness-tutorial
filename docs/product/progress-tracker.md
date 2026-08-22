@@ -82,6 +82,7 @@
 | K17 | 撰写 Timeout 与取消 | `进行中` | `tutorial/zh-CN/02-harness-mechanics/timeout-cancellation.md` 已完成 Draft 与 Polish，并保留三家框架待审锚点。 | 2026-08-22 |
 | K18 | 撰写 Checkpoint 与 Resume | `进行中` | `tutorial/zh-CN/02-harness-mechanics/checkpoint-resume.md` 已完成 Draft 与 Polish，并保留三家框架待审锚点。 | 2026-08-22 |
 | K19 | 撰写 Persistence | `进行中` | `tutorial/zh-CN/02-harness-mechanics/persistence.md` 已完成 Draft 与 Polish，并保留三家框架待审锚点。 | 2026-08-22 |
+| K20 | 撰写 Observability 与 Replay | `进行中` | `tutorial/zh-CN/02-harness-mechanics/observability.md` 已完成 Draft 与 Polish，并保留三家框架待审锚点。 | 2026-08-22 |
 
 ## P2：Harness 机制教材
 
