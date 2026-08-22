@@ -29,9 +29,9 @@
 
 Draft 允许粗糙，但事实声明必须标注 `已验证`、`推断` 或 `未验证`。
 
-### Polish Agent
+### Polish 阶段
 
-Polish Agent 负责语言，不新增事实。
+主 Agent 在 Polish 阶段负责语言，不新增事实。
 
 #### 输入
 
@@ -56,7 +56,7 @@ Polish Agent 负责语言，不新增事实。
 
 ```yaml
 polish:
-  agent: polish-agent
+  agent: main-agent
   date: YYYY-MM-DD
   verdict: pass | needs-changes
   summary: 一句话说明改了什么。
@@ -87,9 +87,9 @@ polish:
 5. **术语首次出现给英文原文，后续只用中文名。** 例如首次写「线束（Harness）」，后续只写「线束」。不要反复混用「Agent」和「智能体」。
 6. **类比贴近日常经验。** 不要用工程隐喻解释另一个工程概念。例如不要用「线束」（汽车电线束）来解释软件中的 Harness；用「交通管理系统」或「工厂流水线的质检站」更直观。
 
-### Implementation Review Agent
+### Implementation Review 阶段
 
-Implementation Review Agent 负责事实和偏差，不负责文风。
+主 Agent 在 Implementation Review 阶段负责事实和偏差，不负责文风。
 
 #### 输入
 
@@ -112,7 +112,7 @@ Implementation Review Agent 负责事实和偏差，不负责文风。
 
 ```yaml
 implementation_review:
-  agent: implementation-review-agent
+  agent: main-agent
   date: YYYY-MM-DD
   verdict: pass | needs-changes
   evidence_version: 仓库或实验版本
@@ -239,9 +239,9 @@ flowchart TD
 
 禁止把理想模型直接写成某家框架的事实。
 
-## Deploy Subagent
+## 部署检查阶段
 
-每次提交推送后，由 Deploy Subagent 负责验证线上站点是否正确更新。
+每次提交推送后，由主 Agent 负责验证线上站点是否正确更新。
 
 ### 职责
 
@@ -255,7 +255,7 @@ flowchart TD
 
 ```yaml
 deploy_check:
-  agent: deploy-agent
+  agent: main-agent
   date: YYYY-MM-DD
   commit: git SHA
   workflow_status: success | failure | in_progress
@@ -275,61 +275,25 @@ deploy_check:
 - 页面内容包含本次变更的关键标记（标题、图表或文本片段）。
 - 如果失败，必须在会话记录中写明根因和修复动作，不允许静默忽略。
 
-## Agent 协作模式
+## 单执行者模式
 
-Goal 模式必须使用严格串行执行。任一时刻最多存在一个 Subagent；不得同时启动多个章节、多个框架分析或多个部署检查。这样可以控制服务商速率限制，也让失败点可定位。
+Goal 模式只使用主 Agent 一个执行者。不得创建 Subagent 或并行子任务；Draft、Polish、Implementation Review、部署检查和进度同步都由主 Agent 按顺序完成。这样消除模型调用链差异，也让失败点可定位。
 
 每小节的执行流程：
 
 ```text
 作者（主 Agent）撰写 Draft
-→ Polish Agent 审查语言
+→ 主 Agent 执行 Polish 阶段
 → 主 Agent 做轻量自检：事实标记、源码锚点、链接、图和格式
-→ 主 Agent 根据反馈修正
 → 主 Agent 提交并推送（最小改动）
-→ 推送后由 Deploy Subagent 串行验证构建、推送和页面可达
+→ 推送后主 Agent 验证构建、推送和页面可达
 → 主 Agent 更新进度表和会话记录
 → 进入下一小节
 ```
 
-在「批量草稿模式」下，Implementation Review Agent 不逐节执行。每节必须保留 `review.implementation.verdict: pending`，并把待核对的源码锚点、命令或实验写入 `pending_review` 清单。全部章节完成初稿后，先按清单执行完整事实审查，再允许任何章节改成 `published`。这个模式只降低节奏，不降低发布门槛。
+在「批量草稿模式」下，Implementation Review 不逐节执行。每节必须保留 `review.implementation.verdict: pending`，并把待核对的源码锚点、命令或实验写入 `pending_review` 清单。全部章节完成初稿后，主 Agent 先按清单执行完整事实审查，再允许任何章节改成 `published`。这个模式只降低节奏，不降低发布门槛。
 
-三个 Subagent 的职责边界：
-
-| Agent | 关注点 | 不负责 |
-| --- | --- | --- |
-| Polish Agent | 语言清晰度、结构、术语统一 | 事实正确性 |
-| Implementation Review Agent | 源码证据、版本、行为一致性 | 文风 |
-| Deploy Subagent | 构建成功、URL 可达、内容上线 | 内容质量 |
-
-### 执行环境声明
-
-### 执行环境声明
-
-每次 Goal 启动时必须记录：
-
-1. 主 Agent 和每个 Subagent 的 provider 与 model；未显式覆盖时写明“继承主 Agent”。
-2. 每类请求的 `max_tokens` 或输出预算；Polish 默认不超过 8192，除非维护者批准更大预算。
-3. 是否存在免费模型、付费模型、本地模型或备用执行器。
-
-不得依赖隐式环境假设。主 Agent 与 Subagent 可以使用不同模型，但差异必须在会话记录中可见。
-
-### 速率限制、支付失败与恢复
-
-遇到服务商 HTTP 402 时：
-
-1. 将其视为额度、余额或输出预算问题，不按瞬时限流反复重试。
-2. 停止当前 Subagent，记录请求的 `max_tokens`、上游报告的可负担额度和最后成功 commit。
-3. 检查账户或 key 余额、per-key limit 和请求输出上限。
-4. 通过补充最低额度、降低 `max_tokens` 或切换等效模型恢复；恢复后从原章节原阶段继续。
-
-遇到服务商 HTTP 429 时：
-
-1. 停止创建任何新的主任务或 Subagent。
-2. 把当前章节、阶段和最后成功的 Git commit 写入会话记录。
-3. 按 60 秒、120 秒、300 秒指数退避，上限 900 秒。
-4. 恢复后继续同一章节的同一阶段；已完成并通过自检的内容不重写。
-5. 如果连续三轮退避仍被限流，把会话标记为暂停，等维护者确认后再恢复。
+阶段边界仍然分离：Polish 只处理语言清晰度、结构和术语；Implementation Review 只处理源码证据、版本和行为一致性；部署检查只验证构建成功、URL 可达和内容上线。
 
 ## 框架深拆标准
 

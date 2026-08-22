@@ -50,6 +50,10 @@ status: 进行中
 
 Goal Agent 因并发 Subagent 过多触发服务商 HTTP 429。后续改为严格串行：主 Agent 先完成单节 Draft，再依次执行 Polish、自检、提交、Deploy 检查和进度同步。任一时刻只保留一个 Subagent；一节完成后才进入下一节。恢复时按 60 秒、120 秒、300 秒退避，上限 900 秒，并从原章节原阶段继续。
 
+### 2026-08-22 策略修订
+
+Polish Subagent 连续返回 HTTP 402 后，维护者决定进一步移除 Subagent 执行路径。现行策略是主 Agent 单执行者串行完成 Draft、Polish、Implementation Review、部署检查和进度同步；不再创建 Subagent，也不再维护 402/429 退避流程。历史记录保留故障背景，但不再是现行执行规范。
+
 ## 开放问题
 
 1. 待运行链接检查和站点构建，确认当前基线是否通过。
