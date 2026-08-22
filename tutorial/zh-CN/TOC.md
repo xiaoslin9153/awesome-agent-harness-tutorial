@@ -38,7 +38,7 @@ review:
 | M-02 | [Context 压缩与截断](./02-harness-mechanics/context-compression.md) | `02-harness-mechanics/context-compression.md` | M-01 | 🟡 Draft / Polish 已通过；Implementation Review 待批量审查 |
 | M-03 | [Tool Schema 与调用协议](./02-harness-mechanics/tool-schema.md) | `02-harness-mechanics/tool-schema.md` | C-02 | 🟡 Draft / Polish 已通过；Implementation Review 待批量审查 |
 | M-04 | [Tool 执行与副作用](./02-harness-mechanics/tool-execution.md) | `02-harness-mechanics/tool-execution.md` | M-03 | 🟡 Draft / Polish 已通过；Implementation Review 待批量审查 |
-| M-05 | Tool 结果处理与截断 | `02-harness-mechanics/tool-results.md` | M-04 | ⬜ 未开始 |
+| M-05 | [Tool 结果处理与截断](./02-harness-mechanics/tool-results.md) | `02-harness-mechanics/tool-results.md` | M-04 | 🟡 Draft / Polish 已通过；Implementation Review 待批量审查 |
 | M-06 | 审批模型 | `02-harness-mechanics/approval.md` | M-04 | ⬜ 未开始 |
 | M-07 | Sandbox 与权限 | `02-harness-mechanics/sandbox.md` | M-06 | ⬜ 未开始 |
 | M-08 | Retry 与幂等 | `02-harness-mechanics/retry-idempotency.md` | M-04 | ⬜ 未开始 |
