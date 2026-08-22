@@ -94,6 +94,7 @@
 | K29 | 撰写 DeepSeek Harness Run 生命周期 | `进行中` | `tutorial/zh-CN/03-frameworks/deepseek-harness/run-lifecycle.md` 已完成 Draft 与 Polish，覆盖 Turn/Step 与流式事件语义。 | 2026-08-22 |
 | K30 | 撰写 DeepSeek Harness 工具与沙箱 | `进行中` | `tutorial/zh-CN/03-frameworks/deepseek-harness/tools-sandbox.md` 已完成 Draft 与 Polish，覆盖工具治理和 Landlock 边界。 | 2026-08-22 |
 | K31 | 撰写 Pi 架构总览 | `进行中` | `tutorial/zh-CN/03-frameworks/pi/overview.md` 已完成 Draft 与 Polish，覆盖框架深拆必备结构。 | 2026-08-22 |
+| K32 | 撰写 Pi Run 生命周期 | `进行中` | `tutorial/zh-CN/03-frameworks/pi/run-lifecycle.md` 已完成 Draft 与 Polish，覆盖事件流与工具批语义。 | 2026-08-22 |
 
 ## P2：Harness 机制教材
 
