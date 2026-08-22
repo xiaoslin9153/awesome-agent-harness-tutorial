@@ -23,6 +23,13 @@
 
 基于网络调研和当前 `site/build.mjs`、`styles.css`、Pages workflow 分析。未修改现有站点。
 
+### 部署验证
+
+- 提交 `33856a7` 后，本地 `node scripts/check-links.mjs` 通过；`site` 内 `npm run check:links` 和 `npm run build` 通过，构建 6 个页面。
+- GitHub Actions 工作流 [32558666948](https://github.com/xiaoslin9153/awesome-agent-harness-tutorial/actions/runs/32558666948) 对该提交执行成功。
+- 线上入口 `/` 和 `/zh-CN/00-overview/` 返回 HTTP 200。
+- 线上语言索引 `/zh-CN/` 返回 HTTP 404。该问题先于本次文档变更存在；B-002 激活时必须把语言入口纳入迁移验收。
+
 ## 下一步
 
 Goal Agent 到达稳定检查点后，人工决定是否激活 B-001 或 B-002。
