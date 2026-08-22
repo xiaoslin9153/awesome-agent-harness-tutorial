@@ -76,6 +76,7 @@
 | K11 | 撰写 Tool Schema 与调用协议 | `进行中` | `tutorial/zh-CN/02-harness-mechanics/tool-schema.md` 已完成 Draft 与 Polish，并保留三家框架待审锚点。 | 2026-08-22 |
 | K12 | 撰写 Tool 执行与副作用 | `进行中` | `tutorial/zh-CN/02-harness-mechanics/tool-execution.md` 已完成 Draft 与 Polish，并保留三家框架待审锚点。 | 2026-08-22 |
 | K13 | 撰写 Tool 结果处理与截断 | `进行中` | `tutorial/zh-CN/02-harness-mechanics/tool-results.md` 已完成 Draft 与 Polish，并保留三家框架待审锚点。 | 2026-08-22 |
+| K14 | 撰写审批模型 | `进行中` | `tutorial/zh-CN/02-harness-mechanics/approval.md` 已完成 Draft 与 Polish，并保留三家框架待审锚点。 | 2026-08-22 |
 
 ## P2：Harness 机制教材
 
