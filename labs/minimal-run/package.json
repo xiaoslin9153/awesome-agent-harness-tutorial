@@ -1,0 +1,9 @@
+{
+  "name": "minimal-agent-run-lab",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node src/run.mjs",
+    "test": "node test/minimal-run.test.mjs"
+  }
+}
