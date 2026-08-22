@@ -36,7 +36,8 @@
    - 确认变更只覆盖当前小点。
    - 阅读 diff，删除顺手修改、调试残留和无关格式化。
    - 检查标题、链接、表格、代码块、Front Matter 和事实标记。
-   - 确认没有提交 `external/`、构建产物、密钥、私有研究材料或 `.DS_Store`。
+   - 确认没有提交 `external/`、构建产物、私有研究材料或 `.DS_Store`。
+   - 确认没有提交凭证、token、私钥内容、密钥文件名、密钥路径或公钥指纹。
    - 确认会话记录已经反映本次变更。
 3. Commit message 使用 Conventional Commits；类型优先使用 `docs`、`chore`、`feat` 或 `fix`。
 4. 不允许把多个机制分析合并成一次大提交；如果已经发生，必须在后续记录中拆分说明，不强行重写历史。
@@ -84,7 +85,7 @@ tutorial/
 - 使用 Git 作为 Markdown 记录之外的历史机制。
 - 只提交有意图、自包含的变更。
 - Commit message 使用 Conventional Commits。
-- 通过 SSH 别名 `github.com-personal` 推送，该别名绑定 GitHub 账号 `xiaoslin9153` 和私钥 `~/.ssh/[removed-key-identifier]`。
+- 通过本机 SSH 配置中的专用别名 `github.com-personal` 推送；不要在仓库记录中写入私钥文件名、路径、公钥指纹或其他密钥标识。
 - 远端 URL 固定为 `git@github.com-personal:xiaoslin9153/awesome-agent-harness-tutorial.git`。
 - 不使用默认 `github.com` 别名，因为它会选择工作账号密钥。
 
