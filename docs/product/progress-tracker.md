@@ -56,6 +56,7 @@
 | --- | --- | --- | --- | --- |
 | K01 | 创建中文教材总览 | `已完成` | `tutorial/zh-CN/00-overview.md` 符合 Front Matter 规范。 | 2026-08-22 |
 | K02 | 定义读者路径和学习地图 | `已完成` | 总览已提供学习路线和目标。 | 2026-08-22 |
+| K06 | 撰写 Agent、Harness 与 Runtime 边界 | `已完成` | `tutorial/zh-CN/01-core-concepts/agent-vs-harness.md` 已通过双 Agent 审查、链接检查和构建。 | 2026-08-22 |
 | K03 | 撰写 Agent Run 生命周期 | `未开始` | 覆盖输入到 final answer、trace 和 resume 的主线；必须经过双 Agent 审查。 | 2026-08-22 |
 | K04/K05 | 建立术语表骨架（含中英对照） | `已完成` | `tutorial/zh-CN/09-glossary/glossary.md` 覆盖核心概念、工具执行、安全、状态和架构模式。 | 2026-08-22 |
 
@@ -94,7 +95,7 @@
 
 | ID | 任务 | 状态 | 锚点 | 最近更新 |
 | --- | --- | --- | --- | --- |
-| FR01 | 架构与入口盘点 | `未开始` | `aa82b2f` | 2026-08-22 |
+| FR01 | 架构与入口盘点 | `进行中` | `docs/comparisons/evidence/C01-reasonix.md` 覆盖定位证据。 | 2026-08-22 |
 | FR02 | Run 生命周期定位 | `未开始` | `aa82b2f` | 2026-08-22 |
 | FR03 | 状态模型定位 | `未开始` | `aa82b2f` | 2026-08-22 |
 | FR04 | Context 与工具链路 | `未开始` | `aa82b2f` | 2026-08-22 |
@@ -105,7 +106,7 @@
 
 | ID | 任务 | 状态 | 锚点 | 最近更新 |
 | --- | --- | --- | --- | --- |
-| FD01 | Monorepo 与协议盘点 | `未开始` | `b150a55` | 2026-08-22 |
+| FD01 | Monorepo 与协议盘点 | `进行中` | `docs/comparisons/evidence/C01-deepseek-harness.md` 覆盖定位证据。 | 2026-08-22 |
 | FD02 | Server 与 Run 生命周期定位 | `未开始` | `b150a55` | 2026-08-22 |
 | FD03 | Session 与状态模型定位 | `未开始` | `b150a55` | 2026-08-22 |
 | FD04 | Tools / Sandbox / Hooks 链路 | `未开始` | `b150a55` | 2026-08-22 |
@@ -116,7 +117,7 @@
 
 | ID | 任务 | 状态 | 锚点 | 最近更新 |
 | --- | --- | --- | --- | --- |
-| FP01 | Agent / AI / Protocol 盘点 | `未开始` | `c49906e` | 2026-08-22 |
+| FP01 | Agent / AI / Protocol 盘点 | `进行中` | `docs/comparisons/evidence/C01-pi.md` 覆盖定位证据。 | 2026-08-22 |
 | FP02 | Coding Agent 入口与生命周期 | `未开始` | `c49906e` | 2026-08-22 |
 | FP03 | Session 与事件模型定位 | `未开始` | `c49906e` | 2026-08-22 |
 | FP04 | 工具执行与容器化边界 | `未开始` | `c49906e` | 2026-08-22 |

@@ -14,7 +14,7 @@ translations:
 
 | ID | 标题 | 文件路径 | 依赖 | 状态 |
 | --- | --- | --- | --- | --- |
-| C-01 | Agent、Harness 与 Runtime 的边界 | `tutorial/zh-CN/01-core-concepts/agent-vs-harness.md` | 无 | 未开始 |
+| C-01 | Agent、Harness 与 Runtime 的边界 | `tutorial/zh-CN/01-core-concepts/agent-vs-harness.md` | 无 | 已完成 |
 | C-02 | 一次 Agent Run 的完整生命周期 | `tutorial/zh-CN/01-core-concepts/agent-run-lifecycle.md` | C-01 | 未开始 |
 | C-03 | Session、Turn 与状态模型 | `tutorial/zh-CN/01-core-concepts/session-and-state.md` | C-02 | 未开始 |
 | C-04 | 事件模型与流式输出 | `tutorial/zh-CN/01-core-concepts/events-and-streaming.md` | C-02 | 未开始 |
