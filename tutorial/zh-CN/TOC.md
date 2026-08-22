@@ -86,7 +86,7 @@ flowchart LR
 | ID | 框架 | 文件路径 | 依赖 | 状态 |
 | --- | --- | --- | --- | --- |
 | F-R1 | [Reasonix 架构总览](./03-frameworks/reasonix/overview.md) | `03-frameworks/reasonix/overview.md` | 第二章 | 🟡 Draft / Polish 已通过；Implementation Review 待批量审查 |
-| F-R2 | [Reasonix Run 生命周期](./03-frameworks/reasonix/run-lifecycle.md) | `03-frameworks/reasonix/run-lifecycle.md` | F-R1 | 🟡 Draft / Polish 已通过；Implementation Review 待批量审查 |
+| F-R2 | [Reasonix Run 生命周期](./03-frameworks/reasonix/run-lifecycle.md) | `03-frameworks/reasonix/run-lifecycle.md` | F-R1 | 🟡 已按 v0.3 重写并通过 Polish / Implementation 自检；Implementation Review 待批量终审 |
 | F-R3 | [Reasonix 工具与审批](./03-frameworks/reasonix/tools-approval.md) | `03-frameworks/reasonix/tools-approval.md` | F-R2 | 🟡 Draft / Polish 已通过；Implementation Review 待批量审查 |
 | F-D1 | [DeepSeek Harness 架构总览](./03-frameworks/deepseek-harness/overview.md) | `03-frameworks/deepseek-harness/overview.md` | 第二章 | 🟡 Draft / Polish 已通过；Implementation Review 待批量审查 |
 | F-D2 | [DeepSeek Harness Run 生命周期](./03-frameworks/deepseek-harness/run-lifecycle.md) | `03-frameworks/deepseek-harness/run-lifecycle.md` | F-D1 | 🟡 Draft / Polish 已通过；Implementation Review 待批量审查 |
