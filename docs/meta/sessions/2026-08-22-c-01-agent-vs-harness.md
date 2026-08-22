@@ -22,15 +22,18 @@ status: completed
 7. 已根据两项审查修正公开章节和 C01 证据索引，并将两个审查结果记录到 Front Matter。
 8. 已更新 `tutorial/zh-CN/TOC.md` 的 C-01 状态和 `docs/product/progress-tracker.md` 中 K06、FR01、FD01、FP01 条目。
 9. 正式验证通过：`cd site && npm run check:links && npm run build`；生成路由包含 `AgentSession` 和 server 装配关键内容。
+10. 提交 `c3a90f2` 已推送到 `origin/main`；Deploy Pages run `32554436532` 成功。
+11. Deploy Agent 检查根路径和 `/zh-CN/01-core-concepts/agent-vs-harness/` 均返回 HTTP 200，且分别包含预期入口和新章节关键内容。
 
 ## 会话结果与检查清单
 
-C-01 已完成：公开章节建立智能体、线束、运行时三层模型，并用三家固定快照说明逻辑边界如何映射到真实装配。创建或修改了公开章节、TOC、C01 三份证据索引、本会话记录和进度表。替代方案是把 Pi 统一写成 `AgentHarness` 主路径，但源码审查证明 CLI 使用 `AgentSession`，因此改为两条装配线。本地链接检查和构建均通过；部署检查将在推送后执行。
+C-01 已完成：公开章节建立智能体、线束、运行时三层模型，并用三家固定快照说明逻辑边界如何映射到真实装配。创建或修改了公开章节、TOC、C01 三份证据索引、本会话记录和进度表。替代方案是把 Pi 统一写成 `AgentHarness` 主路径，但源码审查证明 CLI 使用 `AgentSession`，因此改为两条装配线。本地链接检查和构建均通过；线上部署检查也已通过。
 
 - 证据：`docs/comparisons/evidence/C01-reasonix.md`、`docs/comparisons/evidence/C01-deepseek-harness.md`、`docs/comparisons/evidence/C01-pi.md`。
 - 验证：`cd site && npm run check:links && npm run build`。
+- 部署检查：workflow success；`/` HTTP 200；`/zh-CN/01-core-concepts/agent-vs-harness/` HTTP 200 且包含 `AgentSession`。
 - 未解决问题：DeepSeek Harness 完整启动链路、Pi 恢复协议、Reasonix Controller 到各前端的事件桥接留待后续章节。
-- 下一个具体动作：推送后执行 Deploy Subagent 检查，随后进入 C-02《一次 Agent Run 的完整生命周期》。
+- 下一个具体动作：进入 C-02《一次 Agent Run 的完整生命周期》。
 
 ## 证据与决策
 
@@ -45,4 +48,4 @@ C-01 已完成：公开章节建立智能体、线束、运行时三层模型，
 
 ## 下一步
 
-重新运行链接检查和站点构建；通过后更新 TOC 与进度表，执行最小提交、推送和部署检查。
+C-01 已完成。下一小节是依赖它的 C-02。
