@@ -28,6 +28,8 @@ jobs:
         working-directory: site
       - run: npm run build
         working-directory: site
+        env:
+          SITE_BASE_URL: /${{ github.event.repository.name }}/
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site/dist

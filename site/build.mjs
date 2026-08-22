@@ -4,6 +4,7 @@ import path from "node:path";
 const root = path.resolve(import.meta.dirname, "..");
 const sourceRoot = path.join(root, "tutorial");
 const outputRoot = path.join(root, "site", "dist");
+const baseURL = process.env.SITE_BASE_URL ?? "/";
 
 function escapeHtml(value) {
   return value
@@ -136,7 +137,7 @@ async function buildPage(sourcePath) {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${escapeHtml(frontMatter.title)}</title>
   <meta name="description" content="${escapeHtml(frontMatter.description)}">
-  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="${baseURL}styles.css">
 </head>
 <body>
   <main>
@@ -144,7 +145,7 @@ async function buildPage(sourcePath) {
       ${content}
     </article>
   </main>
-  <script src="/mermaid.min.js"></script>
+  <script src="${baseURL}mermaid.min.js"></script>
   <script>
     mermaid.initialize({ startOnLoad: true, securityLevel: "strict" });
   </script>
@@ -154,7 +155,7 @@ async function buildPage(sourcePath) {
   );
 
   return {
-    route: `/${outputRelativePath}/`,
+    route: `${baseURL}${outputRelativePath}/`,
     lang: frontMatter.lang,
     title: frontMatter.title,
   };
@@ -175,8 +176,11 @@ for (const sourcePath of markdownFiles) {
   pages.push(await buildPage(sourcePath));
 }
 
-const zhHome = pages.find((page) => page.route === "/zh-CN/00-overview/");
-if (!zhHome) throw new Error("Missing Chinese overview page");
+const zhHomeRoute = `${baseURL}zh-CN/00-overview/`;
+const zhHomeExists = pages.some(
+  (page) => page.route === zhHomeRoute,
+);
+if (!zhHomeExists) throw new Error("Missing Chinese overview page");
 
 await writeFile(
   path.join(outputRoot, "index.html"),
@@ -184,12 +188,12 @@ await writeFile(
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="refresh" content="0; url=/zh-CN/00-overview/">
+  <meta http-equiv="refresh" content="0; url=${zhHomeRoute}">
   <title>Agent Harness 学习指南</title>
-  <link rel="canonical" href="/zh-CN/00-overview/">
+  <link rel="canonical" href="${zhHomeRoute}">
 </head>
 <body>
-  <p><a href="/zh-CN/00-overview/">进入中文教程</a></p>
+  <p><a href="${zhHomeRoute}">进入中文教程</a></p>
 </body>
 </html>
 `,
