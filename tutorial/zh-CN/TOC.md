@@ -57,7 +57,7 @@ flowchart LR
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | C-01 | [Agent、Harness 与 Runtime 的边界](./01-core-concepts/agent-vs-harness.md) | `01-core-concepts/agent-vs-harness.md` | 无 | 为什么一个会调用模型的循环仍不能称为完整 Agent 系统？ | 决策能力与受控执行能力的边界；Harness 必须拥有可审计的控制面。 | 谁启动、暂停、恢复和终止一次 Run？ | 🟡 已按 v0.3 详实方法论补齐；Implementation Review 待批量终审 |
 | C-02 | [一次 Agent Run 的完整生命周期](./01-core-concepts/agent-run-lifecycle.md) | `01-core-concepts/agent-run-lifecycle.md` | C-01 | 谁负责 Run 的状态迁移？ | 执行进度与外部副作用的可见性；每次状态变化都必须有明确所有者。 | 多次 Run 如何共享历史、文件和未完成副作用？ | 🟡 已按 v0.3 重写并通过 Polish / Implementation 自检；Implementation Review 待批量终审 |
-| C-03 | [Session、Turn 与状态模型](./01-core-concepts/session-and-state.md) | `01-core-concepts/session-and-state.md` | C-02 | Run 结束后哪些事实可以安全复用？ | 区分权威日志、模型上下文投影和用户界面投影；权威事实只能有单一来源。 | 状态变化如何被外部观察者及时且有序地看到？ | 🟡 Draft / Polish 已通过；Implementation Review 待批量审查 |
+| C-03 | [Session、Turn 与状态模型](./01-core-concepts/session-and-state.md) | `01-core-concepts/session-and-state.md` | C-02 | Run 结束后哪些事实可以安全复用？ | 区分权威日志、模型上下文投影和用户界面投影；权威事实只能有单一来源。 | 状态变化如何被外部观察者及时且有序地看到？ | 🟡 已按 v0.3 重写并通过 Polish / Implementation 自检；Implementation Review 待批量终审 |
 | C-04 | [事件模型与流式输出](./01-core-concepts/events-and-streaming.md) | `01-core-concepts/events-and-streaming.md` | C-03 | 如何在不伪造完成状态的情况下展示进行中的工作？ | 顺序、终态和因果关联必须稳定；部分输出不得提前变成权威事实。 | 组装进模型上下文的内容应遵循什么分层与预算？ | 🟡 Draft / Polish 已通过；Implementation Review 待批量审查 |
 
 ## 第二章：Harness 核心机制
