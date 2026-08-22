@@ -86,4 +86,7 @@ status: 已完成
 
 ## 部署检查
 
-- 待提交后填写最新 Actions run、站点入口 HTTP 状态和受影响页面验证结果。
+- 提交：`96dbc53 docs: rewrite events and streaming`。
+- GitHub Actions：run `32594350412`（Deploy Pages）为 `completed success`。
+- 站点入口 `https://xiaoslin9153.github.io/awesome-agent-harness-tutorial/` 返回 HTTP 200。
+- 受影响页面 `/zh-CN/01-core-concepts/events-and-streaming/` 可访问，并包含“事件模型与流式输出”、`Provider stream` 和 `entry_added`。
