@@ -58,6 +58,7 @@
 | G24 | 固化 Goal 串行执行与限流恢复 | `已废弃` | 已被 G26 单执行者模式取代；历史记录保留 429 背景。 | 2026-08-22 |
 | G25 | 固化 402 支付失败处理 | `已废弃` | 已被 G26 单执行者模式取代；历史记录保留 402 背景。 | 2026-08-22 |
 | G26 | 简化为主 Agent 单执行者模式 | `已完成` | Draft、Polish、Implementation Review 和部署检查均由主 Agent 串行完成；不创建 Subagent。 | 2026-08-22 |
+| G27 | 记录学习系统产品待办 | `已完成` | B-003 保存 Run 模拟器、Failure Museum、Policy Playground、Trace Explorer 和 Harness Atlas 等候选方向。 | 2026-08-22 |
 
 ## P1：知识基础
 
