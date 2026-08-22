@@ -72,6 +72,7 @@
 | K07 | 撰写 Session、Turn 与状态模型 | `进行中` | `tutorial/zh-CN/01-core-concepts/session-and-state.md` 已完成 Polish 和链接检查；Implementation Review 待批量执行。 | 2026-08-22 |
 | K08 | 撰写事件模型与流式输出 | `进行中` | `tutorial/zh-CN/01-core-concepts/events-and-streaming.md` 已完成 Draft 与 Polish，并保留框架事实待审清单。 | 2026-08-22 |
 | K09 | 撰写 Context 组装与分层 | `进行中` | `tutorial/zh-CN/02-harness-mechanics/context-assembly.md` 已完成 Draft 与 Polish，并保留三家框架待审锚点。 | 2026-08-22 |
+| K10 | 撰写 Context 压缩与截断 | `进行中` | `tutorial/zh-CN/02-harness-mechanics/context-compression.md` 已完成 Draft 与 Polish，并保留三家框架待审锚点。 | 2026-08-22 |
 
 ## P2：Harness 机制教材
 
