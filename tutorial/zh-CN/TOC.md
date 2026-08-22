@@ -73,7 +73,7 @@ review:
 | X-02 | [Context 策略对比](./04-comparisons/context.md) | `04-comparisons/context.md` | 第三章 | 🟡 Draft / Polish 已通过；Implementation Review 待批量审查 |
 | X-03 | [工具协议对比](./04-comparisons/tools.md) | `04-comparisons/tools.md` | 第三章 | 🟡 Draft / Polish 已通过；Implementation Review 待批量审查 |
 | X-04 | [安全与审批对比](./04-comparisons/security.md) | `04-comparisons/security.md` | 第三章 | 🟡 Draft / Polish 已通过；Implementation Review 待批量审查 |
-| X-05 | 持久化与恢复对比 | `04-comparisons/persistence.md` | 第三章 | ⬜ 未开始 |
+| X-05 | [持久化与恢复对比](./04-comparisons/persistence.md) | `04-comparisons/persistence.md` | 第三章 | 🟡 Draft / Polish 已通过；Implementation Review 待批量审查 |
 | X-06 | 设计模式与反模式 | `04-comparisons/patterns.md` | X-01 至 X-05 | ⬜ 未开始 |
 
 ## 第五章：实验
