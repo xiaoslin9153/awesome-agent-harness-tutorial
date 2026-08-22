@@ -156,8 +156,8 @@
 1. ✅ 修订 `tutorial/writing-pipeline.md`，加入学习契约、质量门禁和递进交接字段。
 2. ✅ 修订 `docs/skills/tutorial-tech-writing/SKILL.md`，区分「压缩初学者主线」与「保留工程深拆」，并移除活跃行数上限。
 3. ✅ 更新 TOC 的依赖说明、学习契约和遗留问题传递。
-4. 重写首批基准章节；下一项是 `tutorial/zh-CN/01-core-concepts/agent-vs-harness.md`。
-5. 用户确认后，按机制 → 对应框架主题簇 → 下一个机制的串行顺序推进。
+4. 重写首批基准章节；`agent-vs-harness.md` 已按新门禁完成重写和双阶段自检，待维护者确认风格。
+5. 维护者确认样板后，按机制 → 对应框架主题簇 → 下一个机制的串行顺序推进。
 6. 全部初稿完成后统一 Implementation Review。
 7. 最后进入站点改造、发布检查和批量事实审查。
 

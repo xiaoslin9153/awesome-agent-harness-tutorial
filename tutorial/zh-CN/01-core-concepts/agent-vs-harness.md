@@ -1,135 +1,313 @@
 ---
 title: Agent、Harness 与 Runtime 的边界
-description: 用智能体、线束和运行时三层模型，区分任务决策、编排控制与执行承载环境。
+description: 用职责、状态所有权和控制面解释智能体、线束与运行时的边界。
 lang: zh-CN
 content_status: draft
-source_version: 2026-08-22
+source_version: 2026-08-23
 translations:
   en: null
+learning_contract:
+  inherits: 为什么一个会调用模型的循环仍不能称为完整 Agent 系统？
+  resolves: 决策能力与受控执行能力应归属不同控制面。
+  invariant: 未授权副作用不得执行；权威状态必须有明确所有者。
+  hands_off: 谁启动、暂停、恢复和终止一次 Run？
 review:
   polish:
-    agent: polish-agent
-    date: 2026-08-22
+    agent: main-agent
+    date: 2026-08-23
     verdict: pass
-    summary: 已统一中文术语，压缩实现表密度，并补齐初学者过渡与判断收束。
+    summary: 已按学习契约重组双读者结构，保留因果链和源码深拆，删除装饰性表达。
   implementation:
-    agent: implementation-review-agent
-    date: 2026-08-22
+    agent: main-agent
+    date: 2026-08-23
     verdict: pass
     evidence_version: Reasonix aa82b2f; DeepSeek Harness b150a55; Pi c49906e
-    summary: 已修正 Pi 装配路径，并为三家关键结论补充源码锚点。
+    summary: 已核对三家装配入口、Agent 类型、Run 驱动和工具钩子的源码锚点；理论模型未冒充框架事实。
 ---
 
 # Agent、Harness 与 Runtime 的边界
 
-## 一句话结论
+## 上一章遗留问题
 
-智能体决定“下一步做什么”，线束保证“能安全、可靠地做”，运行时提供“在哪里跑”；三者可以合并成一个进程或包，但职责不应混为一谈。
+这是第一章第一节。读者带着一个常见误解进入本书：「只要有一个调用模型的循环，就得到了 Agent」。这个说法只描述了推理循环，没有回答三个工程问题：
+
+1. 谁决定下一步动作？
+2. 谁保证动作只在被允许的边界内发生？
+3. 谁保存事实，让系统在失败后仍能解释发生过什么？
+
+本章先建立职责边界，后续章节才能继续讨论 Run 状态由谁迁移、事件由谁发布、工具副作用由谁审批。
+
+## 本章解决什么矛盾
+
+核心矛盾是「模型会提出下一步」与「系统必须受控地执行下一步」之间的张力。
+
+- 如果把决策和执行混在一个不可审计的循环里，一次错误工具调用就会直接改变文件、进程或外部服务。
+- 如果为了安全把所有逻辑都塞进静态策略，系统又会失去根据观察结果调整行动的能力。
+
+因此，理想设计不是给三层各起一个目录名，而是把**决策权、控制权和资源承载**分开：
+
+| 层 | 核心问题 | 拥有什么 |
+| --- | --- | --- |
+| 智能体（Agent） | 下一步做什么？ | 任务目标、局部判断、动作意图 |
+| 线束（Harness） | 如何安全可靠地做？ | 上下文组装、校验、审批、工具分发、状态、事件、恢复 |
+| 运行时（Runtime） | 在哪里跑？ | 进程、文件系统、网络、时钟、隔离和资源限制 |
+
+## 核心不变量
+
+本章建立两条不变量：
+
+1. **未授权副作用不得执行。** 模型可以提议调用工具，但真正执行前必须经过 Harness 的校验、授权和分发。
+2. **权威事实必须有明确所有者。** 用户消息、模型输出、工具结果、审批决定和状态迁移都要有可追踪来源；UI 或内存中的临时投影不能替代权威日志。
+
+后面章节会反复检查：Context 是权威日志的投影，事件是状态变化的投影，Checkpoint 只能包含闭合事实。如果这一章没有区分决策者、控制面和承载环境，这些后续不变量就无法落地。
 
 ## 理想模型
 
 ```mermaid
-flowchart TD
-  U[用户输入] --> H[线束编排层]
-  H --> A[智能体决策体]
-  A --> M[模型推理]
-  M --> A
-  A -->|工具调用意图| H
-  H -->|校验、审批、执行| RT[运行时执行环境]
-  RT -->|结果、事件、资源限制| H
-  H --> S[(状态与日志)]
+sequenceDiagram
+  participant U as User
+  participant H as Harness
+  participant A as Agent / Model
+  participant R as Runtime
+  U->>H: 输入目标
+  H->>A: 组装上下文、工具契约和约束
+  A->>H: 工具调用意图
+  H->>H: 校验参数、检查策略、请求审批
+  alt 允许执行
+    H->>R: 在受限环境执行副作用
+    R-->>H: 结果、超时、取消或资源错误
+    H->>A: 规范化后的观察结果
+  else 拒绝或失败
+    H-->>A: 失败原因与下一步约束
+  end
+  A->>H: 最终答案或下一个意图
+  H-->>U: 权威状态的对外投影
 ```
 
-**智能体（Agent）** 是任务决策体：看它的决策输入与输出——目标、历史、观察结果、下一步动作或结束信号。模型是最常用的推理内核，但策略、记忆和子任务组织也会影响决策。
+图中的关键点不是箭头数量，而是所有副作用都经过 Harness 这个控制面。Runtime 不理解任务目标；Agent 不能因为「知道某个工具」就直接越过控制面。
 
-**线束（Harness）** 是工程编排层：看它在一次动作前后补齐了哪些系统能力——组装上下文、约束输出、解析工具调用、检查权限、执行副作用、处理失败、维护状态和发布事件。
+## 初学者主线
 
-**运行时（Runtime）** 是承载环境：看它的资源和隔离边界——进程或服务、文件系统、网络、时钟、并发原语和资源限制。它可以被线束选择、适配甚至替换，但本身不理解业务目标。
+把系统想象成一个受控实验室：
 
-## 直觉类比
+1. **Agent 像实验设计师**：根据目标和已有证据，提出下一步实验。
+2. **Harness 像实验室管理员**：确认申请、准备材料、检查防护、记录日志，并把结果交回设计师。
+3. **Runtime 像实验室设施**：提供水电、通风和仪器，但不知道这次实验要证明什么。
 
-把智能体想成司机：根据目的地和路况决定转弯、停车或继续开。线束是车辆的控制系统：油门、刹车、仪表、安全带和导航接口。运行时是道路和车辆运行环境：有路才能行驶，也有限速和天气约束。
+一个只有「发 prompt、收文本」的程序是模型客户端。它缺少至少四类 Harness 能力：
 
-对应到软件：智能体做任务决策，线束做约束、校验和编排，运行时提供进程、文件和网络等承载能力。
+1. 工具契约和参数校验。
+2. 权限、审批和沙箱边界。
+3. 权威状态与事件记录。
+4. 失败分类、重试、取消和恢复。
 
-## 机制拆解
+这四项不是可选插件。只要程序会修改文件、执行命令、访问网络或多步推进任务，它们就会决定系统是否可信。
 
-| 边界问题 | 智能体的责任 | 线束的责任 | 运行时的责任 |
-| --- | --- | --- | --- |
-| 选择动作 | 结合目标和观察结果给出下一步。 | 把候选工具、约束和历史组织成可用输入。 | 提供计算和网络资源。 |
-| 执行副作用 | 发起工具调用意图。 | 校验参数、审批、分发和记录结果。 | 实际访问进程、文件和网络。 |
-| 维护状态 | 保持完成任务所需的局部判断。 | 持久化回合、事件、检查点和恢复依据。 | 提供存储、锁和崩溃恢复原语。 |
-| 处理异常 | 选择重试、改道或放弃。 | 分类错误、限制重试、回滚可回滚部分并通知用户。 | 暴露超时、取消和资源错误。 |
+## 机制深拆
 
-两个容易混淆的点：
+### 决策输入与动作输出
 
-1. **智能体不是只有模型。** 一个系统若只是把 prompt 发给模型并展示文本，通常只是模型客户端；加入工具、状态、策略和多步循环后才更接近智能体。
-2. **线束不是运行时的别名。** 线束会使用运行时，但它关心的是任务编排；运行时关心的是资源和隔离。
+Agent 的输入通常包括目标、历史观察、可用工具契约和运行约束。它的输出不是「已经完成的动作」，而是结构化意图，例如 `tool_call`、最终答案或结束信号。
 
-## 框架实现视角
+这个区别很重要：
 
-以下面向有经验读者，说明同一逻辑边界在真实项目中的装配方式；初学者可先读“常见坑”。三家快照都证明边界是逻辑分层，不一定等于目录或包名一一对应。
+```text
+模型输出：{"tool":"write_file","path":"/tmp/a.txt","content":"hi"}
+系统事实：还没有写入任何文件
+```
 
-### Reasonix
+只有 Harness 校验参数、获得授权并交给 Runtime 后，「写入」才从意图变成副作用。之后还要把工具结果写回权威日志，模型下一轮看到的才是已发生的观察。
 
-- **装配方式**：本地引擎承接核心智能体和线束能力；CLI/TUI、桌面和 ACP 前端通过启动装配进入同一 Controller。
-- **关键符号**：`Agent` 聚合 Provider、工具 Registry 和 Session，并由 `Run` 驱动；`boot.BuildRuntime` 和 `boot.Build` 是组装点。
-- **证据**：`internal/agent/agent.go:280`、`internal/boot/runtime.go:96`、`internal/cli/acp.go:96`、`desktop/tab_controller_boot.go:13`；commit `aa82b2f`。
+### 控制面的最小闭环
 
-### DeepSeek Harness
-
-- **装配方式**：核心拆出 `dsh-agent`、`dsh-agent-loop`、`dsh-session` 和 CLI 应用；CLI 只是一类交互与启动入口。
-- **关键符号**：`Agent` 接口绑定 Session 身份；`ReactLoopAgent` 从持久会话日志派生请求；`AgentLoop` 服务负责创建该驱动。
-- **证据**：`packages/core/agent/src/runtime-types.ts:64`、`packages/core/agent-loop/src/agent.ts:64`、`packages/core/agent-loop/src/index.ts:295`、`apps/cli/package.json`；commit `b150a55`。
-
-### Pi
-
-- **装配方式**：通用 `agent` 包提供循环、lane、会话上下文和执行环境抽象；`coding-agent` 包按宿主分成两条装配线。
-- **关键符号**：CLI 主路径经 `createAgentSession` 创建 `AgentSession`，聚合 `Agent`、`SessionManager` 和 `SettingsManager`；server 路径经 `createCodingAgentHarness` 创建通用包中的 `AgentHarness`。
-- **证据**：`packages/agent/src/harness/types.ts:303`、`packages/coding-agent/src/core/sdk.ts:386`、`packages/coding-agent/src/core/agent-session.ts:310`、`packages/coding-agent/src/server/create-harness.ts:80`；commit `c49906e`。
+一次受控工具调用至少经过六个阶段：
 
 ```mermaid
 flowchart TD
-  subgraph Reasonix[Reasonix aa82b2f]
-    R1[命令行 / 桌面 / ACP] --> R2[Controller]
-    R2 --> R3["BuildRuntime 启动装配"]
-    R3 --> R4["Agent.Run 驱动"]
-  end
-
-  subgraph DSH[DeepSeek Harness b150a55]
-    D1[CLI 应用] --> D2["AgentRegistry / AgentFactory"]
-    D2 --> D3[ReactLoopAgent]
-    D3 --> D4[持久会话日志]
-  end
-
-  subgraph Pi[Pi c49906e]
-    P1[Coding Agent CLI] --> P2[createAgentSession]
-    P2 --> P3[AgentSession]
-    P3 --> P4[SessionManager]
-    P5[Coding Agent Server] --> P6[createCodingAgentHarness]
-    P6 --> P7[AgentHarness]
-  end
+  A[解析模型输出] --> B{Schema 合法？}
+  B -- 否 --> Z[返回可修正错误]
+  B -- 是 --> C{策略允许？}
+  C -- 否 --> Y[记录拒绝并反馈模型]
+  C -- 是 --> D{需要人工审批？}
+  D -- 需要 --> E[等待批准]
+  E -- 批准 --> F[Runtime 受限执行]
+  E -- 拒绝 --> Y
+  D -- 不需要 --> F
+  F --> G[规范化结果并追加日志]
+  G --> H[交回 Agent 形成新观察]
 ```
 
-图中箭头表示主要装配方向，不代表每章都会展开的全部事件流。Reasonix 的 Controller 同时承担控制面职责；DeepSeek Harness 让持久会话日志成为智能体驱动的关键依赖；Pi 的 CLI 与 server 使用不同的上层装配。
+这条链保护了本章的核心不变量。任何一个环节缺失，都会产生下面这类故障。
 
-## 常见坑
+### 反例与故障模式
 
-- **按名字猜职责。** 有的项目叫 Agent，却包含完整 Harness；有的叫 Runtime，实际是编排服务。这也解释了为什么不能只看包名判断边界。
-- **把 UI 当成线束全部。** UI 只是交互前端；真正的线束还必须处理后端状态、权限、错误和恢复。
-- **把模型能力当系统能力。** 模型可能“知道”某个工具，但没有 Schema 注册、参数校验和执行边界，调用不会安全发生。
-- **忽略宿主差异。** 同一线束放进 CLI、Web 服务或桌面应用时，进程生命周期、权限和持久化约束都会改变设计取舍。
+**反例 1：把模型客户端当 Agent。**
 
-判断一个系统的边界时，不要从名字出发，而要看四件事：决策输入来自哪里、状态归谁所有、副作用在哪里被允许执行、资源和隔离由谁限制。
+程序直接把用户文本发给模型，再把回复展示出来。看起来能对话，但没有权威日志和副作用控制。一旦加入「帮我删掉临时文件」的工具，模型输出会被当作命令执行；拒绝原因也不会成为模型可见事实，下一轮仍可能重复危险提议。
 
-## 自检问题
+**反例 2：按包名判断安全边界。**
+
+某模块叫 `runtime`，维护者便以为它天然负责隔离。但如果文件路径归上层拼接、网络客户端由工具层创建，这个名字不能阻止越权访问。判断边界要看四个问题：谁能发起副作用、谁校验参数、谁持有凭证、谁限制进程和网络。
+
+**反例 3：把 UI 当成 Harness。**
+
+前端弹窗显示「是否允许执行」，但后端工具没有再次校验。攻击者绕过界面直接调用服务端接口后，审批被跳过。UI 只是控制面的一种投影；真正的审批必须在执行路径上生效。
+
+**反例 4：本地 CLI 直接改成多租户服务。**
+
+本地版本可以让 Session 绑定当前工作目录和用户身份。服务化后，如果没有把会话所有权、文件根、凭证范围和并发租约移入 Harness，两个请求可能共享同一工作区：一个任务的清理操作会删除另一个任务的中间产物。
+
+### 一条完整因果链
+
+以「模型要求写入仓库外文件」为例：
+
+1. **触发条件**：模型输出 `write_file`，目标路径指向工作区外。
+2. **控制面检查**：Harness 解析 Schema，发现路径合法但超出允许根。
+3. **状态变化**：不产生文件副作用；审批或拒绝事件进入权威日志。
+4. **可观察结果**：模型收到明确的越界错误；用户界面显示该次尝试被拒绝。
+5. **后续影响**：模型可以在下一轮选择工作区内路径，而不是误以为写入成功。
+
+如果第 3 步只把错误打印到终端，不写入模型可见观察和持久日志，就会出现两类事故：模型重复尝试相同路径；事后审计无法解释为什么某些文件没有被修改。
+
+## 设计取舍
+
+| 方案 | 收益 | 代价 | 适用条件 |
+| --- | --- | --- | --- |
+| 三层职责分离 | 可测试、可审计、便于替换 Runtime 和模型 | 需要定义稳定接口和更多状态管理 | 会产生副作用或多轮长任务 |
+| 单体脚本 | 启动快、代码少 | 权限、恢复和观测容易遗漏 | 只读演示或无副作用原型 |
+| 把策略全部放在模型 prompt | 改动快，无需额外服务 | prompt 注入和模型漂移可能绕过约束 | 只作为纵深防御的一层 |
+| 把所有控制放在 Runtime | 隔离强 | 缺少任务级上下文，难以解释业务意图 | 与 Harness 策略配合使用 |
+
+分离不是为了增加层数，而是为了让每个失败都有明确责任点：意图错误回到 Agent，授权错误回到 Harness，资源错误来自 Runtime。
+
+## 框架实现对照
+
+三家项目都证明：这些边界是**逻辑职责**，不一定等于目录名或包名。同一个包可能同时承担 Agent 循环和部分 Harness 能力；关键是看装配关系和状态所有权。
+
+### Reasonix
+
+Reasonix 的 `Agent` 明确聚合 Provider、工具 Registry 和 Session，并由 `Run` 驱动一次任务：
+
+```go
+// internal/agent/agent.go:280-288 @ aa82b2f
+type Agent struct {
+        agentConfig
+        svc agentServices
+        sess sessionRuntime
+}
+
+// internal/agent/agent.go:1239 @ aa82b2f
+func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
+        // ... append input, acquire workspace lease,
+        // then return a.runToolLoop(ctx, state)
+}
+```
+
+`svc` 是注入进来的协作服务，`sess` 是一次会话拥有的运行时状态。`Run` 注释说明它会追加用户输入并驱动工具循环，直到得到最终答案、上下文取消或 Provider 出错（`internal/agent/agent.go:1234-1238`）。
+
+装配点在 `internal/boot/runtime.go:96` 的 `BuildRuntime`。CLI/TUI、桌面和 ACP 前端可以复用这套装配，例如 `internal/cli/acp.go:96` 和仓库根目录下的 `desktop/tab_controller_boot.go:13`。这说明「Runtime」在这里不是纯操作系统概念，而是启动期组合出的 Provider、工具、Session 和宿主适配集合。
+
+### DeepSeek Harness
+
+DeepSeek Harness 把 Agent 定义为绑定 Session 身份的公共句柄：
+
+```ts
+// packages/core/agent/src/runtime-types.ts:64-74 @ b150a55
+export interface Agent {
+  readonly id: SessionId;
+  readonly options: AgentOptions;
+  readonly session: Session;
+  readonly inbox: Inbox;
+  readonly status: AgentStatus;
+}
+```
+
+注释直接指出：`session` 的 log 是 durable source of truth；`inbox` 是 durable pending work 的 Agent 投影；`status` 在每次 `agent/status` 迁移时镜像更新（`runtime-types.ts:69-74`）。
+
+具体驱动者是 `ReactLoopAgent`。构造函数接收 `id`、`options` 和 `session`，从 Session 事件里找最后一个 `turn/start` 初始化 phase，并创建 Inbox 和事件分发器（`packages/core/agent-loop/src/agent.ts:80-97`）。工厂服务 `AgentLoop` 通过依赖注入拿到 `agents`、`sessions`、`llm`、`tools` 和 `systemPrompt`，再创建 `ReactLoopAgent` 并把它放入作用域（`packages/core/agent-loop/src/index.ts:296-297`、`:549-563`）。
+
+这个设计的精妙之处是把「权威事实」和「运行中投影」分开：Agent 可以有内存中的 phase 和 Inbox 投影，但恢复语义回溯到持久 Session 日志。
+
+### Pi
+
+Pi 分成通用 `packages/agent` 和领域侧 `packages/coding-agent`。通用 `Agent` 自己声明为低层循环的有状态包装：
+
+```ts
+// packages/agent/src/agent.ts:167-181 @ c49906e
+export class Agent {
+  private _state: MutableAgentState;
+  public convertToLlm: (...) => Message[] | Promise<Message[]>;
+  public transformContext?: (...) => Promise<AgentMessage[]>;
+  public streamFunction: StreamFn;
+  public beforeToolCall?: (...) => Promise<BeforeToolCallResult | undefined>;
+  public afterToolCall?: (...) => Promise<AfterToolCallResult | undefined>;
+}
+```
+
+Coding SDK 在 `createAgentSession` 中注入模型流函数、扩展上下文转换、重试设置、Session ID 和 steering / follow-up 模式（`packages/coding-agent/src/core/sdk.ts:304-370`）。随后用 Session Manager、Settings Manager、cwd、自定义工具和 Extension Runner 创建 `AgentSession`（`sdk.ts:386-400`）。
+
+工具控制面通过回调挂到通用 Agent 上：`AgentSession._installAgentToolHooks()` 设置 `beforeToolCall`，读取当时的 `_extensionRunner` 并发出 `tool_call` 事件；扩展失败会阻断执行（`core/agent-session.ts:484-504`）。默认激活的基础工具是 `read`、`bash`、`edit`、`write`，再按配置过滤（`sdk.ts:254-261`）。
+
+这个分层的收益是通用循环不绑定 Coding 领域；代价是真实控制面分散在 `AgentOptions`、`AgentSession`、Extension Runner 和 Session Manager 之间，读代码时必须沿装配线追。
+
+### 对照表
+
+| 维度 | Reasonix | DeepSeek Harness | Pi |
+| --- | --- | --- | --- |
+| Agent 主体 | `internal/agent.Agent` 聚合 Provider、Registry、Session | `ReactLoopAgent implements Agent` | `packages/agent.Agent` 有状态包装 |
+| 权威状态 | Session / 服务协作层共同支撑 | Session 日志是 durable source of truth | Session Manager 记录，Agent 内存态可恢复 |
+| 工具控制 | `ToolHooks.PreToolUse` 可阻断调用 | Agent Loop 注入 tools 服务 | `beforeToolCall` 转 Extension Runner |
+| 宿主装配 | CLI、Desktop、ACP 进入 Boot Runtime | CLI 只是应用入口，核心服务拆包 | SDK / Server / TUI 各自组装 Session |
+| 主要启发 | 启动期统一装配，宿主差异留在边缘 | 先固定持久身份和日志，再做运行投影 | 通用循环与领域 SDK 解耦 |
+
+## 实现精妙之处
+
+**Reasonix：构造期权限不同于交互模式。**
+
+`planMode` 是协作开关，而 `readOnlyExecution` 是构造期防御，生命周期内持续验证代理调用；两者都不替换 permission 或 sandbox 边界（`internal/agent/agent.go:300-308`）。`mutationDependencyBarrier` 还会在第一个持久写入失败或被阻断后，防止后续代理调用靠声明 `ReadOnly()` 绕过屏障（`:310-315`）。它承认一个现实：模型可见的能力标签不能单独作为安全事实。
+
+代价是状态机更复杂。普通读者不能只看「Plan Mode」理解权限；实现者也要区分交互偏好、构造期能力和跨调用的屏障。
+
+**DeepSeek Harness：先固定身份，再谈驱动。**
+
+`Agent.id` 与 Session 共享同一个 `SessionId`；`ReactLoopAgent` 从 Session 日志派生 last turn，并把 Inbox 作为 durable work 的投影（`runtime-types.ts:64-76`、`agent.ts:87-96`）。这让取消、恢复和审计可以先锚定到同一条权威历史，而不是散落在多个内存对象里。
+
+代价是对 Session 写入顺序和 schema 演化要求高。日志一旦含糊，Agent 投影和恢复行为都会失去依据。
+
+**Pi：用回调把领域策略插进通用循环。**
+
+通用 `Agent` 暴露 `beforeToolCall` 和 `afterToolCall`；Coding 侧把它们接到 Extension Runner。回调每次读取当前 runner，因此扩展热替换后不需要重新安装 hook（`agent-session.ts:476-504`）。这种设计让通用包保持小接口，领域包负责策略。
+
+代价是控制流不再集中在一个文件。排查「谁拒绝了工具」时，必须知道通用回调、扩展包装器和 Session 层各自的顺序。
+
+## 自检与面试追问
+
+基础自检：
 
 1. 用户输入进入系统后，第一个拥有状态的层是谁？它持久化了哪些最小事实？
-2. 某个工具调用被拒绝时，谁通知模型、谁写审计日志、谁阻止副作用？
-3. 如果把同一个智能体从本地 CLI 移到多租户服务，哪些职责应留在线束，哪些交给运行时？
-4. 一个包名叫 `runtime` 是否足以证明它是本章定义的运行时？还需要看什么？
+2. 工具调用被拒绝时，谁通知模型、谁写审计日志、谁阻止副作用？
+3. 同一个 Agent 从本地 CLI 移到多租户服务后，哪些职责应留在 Harness，哪些交给 Runtime？
+4. 一个包名叫 `runtime` 是否足以证明它是本章定义的 Runtime？
+
+面试追问：
+
+1. 设计一个 Coding Agent 时，你会把「生成 patch」「应用 patch」「运行测试」「上传 artifact」分别放进哪一层？每一步的失败如何反馈？
+2. 为什么「模型承诺不会删除文件」不能作为安全控制？
+3. 如果审批服务暂时不可用，系统应该 fail open 还是 fail closed？两种选择分别破坏哪些不变量？
+4. 你如何在代码评审中快速发现「UI 审批」没有落到执行路径？
+
+## 交给下一章的问题
+
+本章确定了职责边界，但没有展开一次 Run 内部的完整状态机：
+
+- 什么时候算 Run 开始？
+- 模型流式输出进行到一半时，系统处于什么状态？
+- 工具循环何时结束？
+- 取消、失败和最终答案如何改变权威状态？
+
+[下一章](./agent-run-lifecycle.md)把这些边界问题变成一次 Agent Run 的完整生命周期。
 
 ## 相关页面
 
 - [教材目录](../TOC.md)
-- [术语表](../../zh-CN/09-glossary/glossary.md)
+- [术语表](../09-glossary/glossary.md)
