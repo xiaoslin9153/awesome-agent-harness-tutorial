@@ -4,5 +4,11 @@
   "type": "module",
   "scripts": {
     "build": "node build.mjs"
+  },
+  "dependencies": {
+    "mermaid": "^11.17.0"
+  },
+  "devDependencies": {
+    "prettier": "^3.9.6"
   }
 }
