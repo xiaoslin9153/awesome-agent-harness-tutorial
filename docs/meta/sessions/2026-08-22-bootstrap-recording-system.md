@@ -87,3 +87,30 @@ The repository now has a documentation-first recording system. Product scope, co
 ## Next Action
 
 Resolve the canonical target, repository or product source, version, and commit for Reasonix, DeepSeek Harness, and Pi. Then create the first lifecycle article: "Lifecycle of an Agent Run".
+
+## Follow-Up Session Addendum: 2026-08-22
+
+### Git Setup
+
+- Initialized the repository on branch `main`.
+- Added `.gitignore`.
+- Extended `AGENTS.md` with the Git and remote policy.
+- Committed the initial documentation set as `7a80f06 docs: bootstrap product and session records`.
+- Configured `origin` as `git@github.com-personal:xiaoslin9153/awesome-agent-harness-tutorial.git`.
+
+### Key Verification
+
+- Matching private key: `~/.ssh/[removed-key-identifier]`.
+- Public-key fingerprint: `[removed-public-fingerprint]`.
+- SSH alias: `github.com-personal`.
+- GitHub authentication result: authenticated as account `xiaoslin9153`.
+
+### Push Blocker
+
+The push failed because `xiaoslin9153/awesome-agent-harness-tutorial` does not currently exist on GitHub.
+
+### Next Actions
+
+1. Create the GitHub repository under `xiaoslin9153`.
+2. Run `git push -u origin main`.
+3. Continue with canonical framework target selection.
