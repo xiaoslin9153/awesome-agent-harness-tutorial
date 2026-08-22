@@ -38,3 +38,7 @@
 - 变更只包含 Skill 新增、Polish Agent 挂接、进度表记录和本会话记录。
 - `node scripts/check-links.mjs` 通过。
 - diff 无凭证、密钥路径、指纹或构建产物。
+
+## 部署检查
+
+Commit `867dbc6` 的 GitHub Actions 部署成功。站点入口、总览页和 Agent Run 生命周期页均返回 HTTP 200，且包含预期标题。
