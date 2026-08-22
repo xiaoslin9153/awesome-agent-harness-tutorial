@@ -7,6 +7,7 @@
 ## 必读文件
 
 - 开始实质性工作前，必须阅读 `docs/meta/session-hook.md`。
+- 查看或更新整体状态前，必须阅读 `docs/product/progress-tracker.md`。
 - 修改产品范围、框架范围、对比标准或发布策略前，必须阅读 `docs/product/product-design.md` 和 `docs/comparisons/framework-comparison-ledger.md`。
 
 ## 内容分层
@@ -26,6 +27,7 @@
 3. 每个有意义的步骤后更新会话记录，包括已完成内容、决策、证据、开放问题和下一步。
 4. 会话结束前完成 `docs/meta/session-checklist.md`。
 5. 如果未能完成计划步骤，必须记录确切阻塞原因和下一个具体动作。
+6. 会话结束前更新 `docs/product/progress-tracker.md` 中受影响条目的状态、证据和日期。
 
 ## 最小改动与提交纪律
 

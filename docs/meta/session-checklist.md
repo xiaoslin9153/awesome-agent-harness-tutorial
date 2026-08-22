@@ -9,6 +9,7 @@
 - [ ] 记录未解决问题。
 - [ ] 定义下一个具体动作。
 - [ ] 如果范围变化，更新 `docs/product/product-design.md`。
+- [ ] 更新 `docs/product/progress-tracker.md` 中受影响条目。
 - [ ] 如果框架范围、证据或结论变化，更新 `docs/comparisons/framework-comparison-ledger.md`。
 - [ ] 在歧义影响理解时，把声明标记为 `已验证`、`推断` 或 `未验证`。
 - [ ] 把会话标记为 `已完成`、`暂停` 或 `阻塞`。
