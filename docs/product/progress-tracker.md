@@ -21,7 +21,7 @@
 | 阶段 | 名称 | 目标 | 状态 | 完成标准 |
 | --- | --- | --- | --- | --- |
 | P0 | 基础设施与治理 | 建立 Git、推送、记录、对比和语言接口。 | `进行中` | 核心治理完成；剩余外部仓库同步策略。 |
-| P1 | 知识基础 | 建立概念总纲、术语表和第一篇核心教材。 | `进行中` | 总览与两篇核心概念已成稿；继续补齐 C03/C04。 |
+| P1 | 知识基础 | 建立概念总纲、术语表和第一篇核心教材。 | `进行中` | 总览、两篇核心概念与 C03 已成稿；C03 事实审查延后。继续补齐 C04。 |
 | P2 | Harness 机制教材 | 完成核心机制章节和实验引用。 | `未开始` | 每个机制有中文章节和至少一个实验或不可运行说明。 |
 | P3 | 框架源码拆解 | 完成 Reasonix、DeepSeek Harness、Pi 的机制级拆解。 | `进行中` | 三家 C01-C25 有证据索引和结论。 |
 | P4 | 横向对比 | 输出机制级对比和设计模式。 | `未开始` | 对比账本填完并提炼出模式与反模式。 |
@@ -69,6 +69,7 @@
 | K06 | 撰写 Agent、Harness 与 Runtime 边界 | `已完成` | `tutorial/zh-CN/01-core-concepts/agent-vs-harness.md` 已通过双 Agent 审查、链接检查和构建。 | 2026-08-22 |
 | K03 | 撰写 Agent Run 生命周期 | `已完成` | `tutorial/zh-CN/01-core-concepts/agent-run-lifecycle.md` 覆盖输入、流式推理、工具分支、终止和恢复主线，已通过双 Agent 审查。 | 2026-08-22 |
 | K04/K05 | 建立术语表骨架（含中英对照） | `已完成` | `tutorial/zh-CN/09-glossary/glossary.md` 覆盖核心概念、工具执行、安全、状态和架构模式。 | 2026-08-22 |
+| K07 | 撰写 Session、Turn 与状态模型 | `进行中` | `tutorial/zh-CN/01-core-concepts/session-and-state.md` 已完成 Polish 和链接检查；Implementation Review 待批量执行。 | 2026-08-22 |
 
 ## P2：Harness 机制教材
 
