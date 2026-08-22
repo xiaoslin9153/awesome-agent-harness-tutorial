@@ -40,7 +40,7 @@ review:
 | M-04 | [Tool 执行与副作用](./02-harness-mechanics/tool-execution.md) | `02-harness-mechanics/tool-execution.md` | M-03 | 🟡 Draft / Polish 已通过；Implementation Review 待批量审查 |
 | M-05 | [Tool 结果处理与截断](./02-harness-mechanics/tool-results.md) | `02-harness-mechanics/tool-results.md` | M-04 | 🟡 Draft / Polish 已通过；Implementation Review 待批量审查 |
 | M-06 | [审批模型](./02-harness-mechanics/approval.md) | `02-harness-mechanics/approval.md` | M-04 | 🟡 Draft / Polish 已通过；Implementation Review 待批量审查 |
-| M-07 | Sandbox 与权限 | `02-harness-mechanics/sandbox.md` | M-06 | ⬜ 未开始 |
+| M-07 | [Sandbox 与权限](./02-harness-mechanics/sandbox.md) | `02-harness-mechanics/sandbox.md` | M-06 | 🟡 Draft / Polish 已通过；Implementation Review 待批量审查 |
 | M-08 | Retry 与幂等 | `02-harness-mechanics/retry-idempotency.md` | M-04 | ⬜ 未开始 |
 | M-09 | Timeout 与取消 | `02-harness-mechanics/timeout-cancellation.md` | M-08 | ⬜ 未开始 |
 | M-10 | Checkpoint 与 Resume | `02-harness-mechanics/checkpoint-resume.md` | C-03 | ⬜ 未开始 |
