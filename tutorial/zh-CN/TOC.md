@@ -81,7 +81,7 @@ review:
 | ID | 标题 | 文件路径 | 依赖 | 状态 |
 | --- | --- | --- | --- | --- |
 | L-01 | [最小 Agent Run 实验](./05-labs/minimal-run.md) | `05-labs/minimal-run.md` | C-02 | 🟡 Draft / Polish 已通过；Implementation Review 待批量审查 |
-| L-02 | Context 膨胀实验 | `05-labs/context-bloat.md` | M-02 | ⬜ 未开始 |
+| L-02 | [Context 膨胀实验](./05-labs/context-bloat.md) | `05-labs/context-bloat.md` | M-02 | 🟡 Draft / Polish 已通过；Implementation Review 待批量审查 |
 | L-03 | Tool 重试副作用实验 | `05-labs/retry-side-effects.md` | M-08 | ⬜ 未开始 |
 | L-04 | 审批拒绝恢复实验 | `05-labs/approval-rejection.md` | M-06 | ⬜ 未开始 |
 

@@ -103,6 +103,7 @@
 | K38 | 撰写持久化与恢复对比 | `进行中` | `tutorial/zh-CN/04-comparisons/persistence.md` 已完成 Draft 与 Polish，覆盖提交点、投影、分支、取消和崩溃修复。 | 2026-08-22 |
 | K39 | 撰写设计模式与反模式 | `进行中` | `tutorial/zh-CN/04-comparisons/patterns.md` 已完成 Draft 与 Polish，覆盖决策规则、可迁移模式、反模式和迁移检查单。 | 2026-08-22 |
 | K40 | 撰写最小 Agent Run 实验 | `进行中` | `tutorial/zh-CN/05-labs/minimal-run.md` 已完成 Draft 与 Polish；`labs/minimal-run` 三条路径测试通过，两套链接检查通过。Implementation Review 待批量审查。 | 2026-08-22 |
+| K41 | 撰写 Context 膨胀实验 | `进行中` | `tutorial/zh-CN/05-labs/context-bloat.md` 已完成 Draft 与 Polish；`labs/context-bloat` 比较 naive 与 bounded 投影，测试通过且两套链接检查通过。Implementation Review 待批量审查。 | 2026-08-23 |
 
 ## P2：Harness 机制教材
 
@@ -183,8 +184,8 @@
 
 | ID | 任务 | 状态 | 验收标准 | 最近更新 |
 | --- | --- | --- | --- | --- |
-| L01 | 建立 `labs/` 目录规范 | `进行中` | L-01 教材与 `labs/minimal-run` 已建立目录、命令、依赖和输出说明。 | 2026-08-22 |
-| L02 | Mock model / fake tool 基座 | `进行中` | fake model、echo tool 和三条路径测试可离线运行。 | 2026-08-22 |
+| L01 | 建立 `labs/` 目录规范 | `进行中` | L-01 与 L-02 教材已建立目录、命令、依赖、输出和测试说明。 | 2026-08-23 |
+| L02 | Mock model / fake tool 基座 | `进行中` | fake model、echo tool、确定性 Context 历史和离线测试可重复运行。 | 2026-08-23 |
 | Q01 | 概念与架构题库 | `未开始` | 每题有考察点、参考答案、追问和常见错误。 | 2026-08-22 |
 | Q02 | 实现与调试题库 | `未开始` | 覆盖工具、流式、取消、重试和状态恢复。 | 2026-08-22 |
 | Q03 | 安全与系统设计题库 | `未开始` | 覆盖沙箱、审批、注入、成本和多 Agent。 | 2026-08-22 |

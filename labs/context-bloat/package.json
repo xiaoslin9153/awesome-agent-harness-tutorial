@@ -1,0 +1,9 @@
+{
+  "name": "context-bloat-lab",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node src/run.mjs",
+    "test": "node test/context-bloat.test.mjs"
+  }
+}
