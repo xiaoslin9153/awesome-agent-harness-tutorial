@@ -70,6 +70,7 @@
 | K03 | 撰写 Agent Run 生命周期 | `已完成` | `tutorial/zh-CN/01-core-concepts/agent-run-lifecycle.md` 覆盖输入、流式推理、工具分支、终止和恢复主线，已通过双 Agent 审查。 | 2026-08-22 |
 | K04/K05 | 建立术语表骨架（含中英对照） | `已完成` | `tutorial/zh-CN/09-glossary/glossary.md` 覆盖核心概念、工具执行、安全、状态和架构模式。 | 2026-08-22 |
 | K07 | 撰写 Session、Turn 与状态模型 | `进行中` | `tutorial/zh-CN/01-core-concepts/session-and-state.md` 已完成 Polish 和链接检查；Implementation Review 待批量执行。 | 2026-08-22 |
+| K08 | 撰写事件模型与流式输出 | `进行中` | `tutorial/zh-CN/01-core-concepts/events-and-streaming.md` 已完成 Draft 与 Polish，并保留框架事实待审清单。 | 2026-08-22 |
 
 ## P2：Harness 机制教材
 
