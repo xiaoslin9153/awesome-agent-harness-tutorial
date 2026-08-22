@@ -51,6 +51,7 @@
 | G17 | 建立 Markdown 链接检查 | `已完成` | `scripts/check-links.mjs`；CI 集成；本地验证通过。 | 2026-08-22 |
 | G18 | 支持 Markdown 表格渲染与 TOC 可点击链接 | `已完成` | 构建器解析表格、内联链接、行内代码。 | 2026-08-22 |
 | G19 | 升级 Polish 中文写作标准与密度检查 | `已完成` | 六条中文规则 + 信息密度检查写入 writing-pipeline.md。 | 2026-08-22 |
+| G20 | 引入项目级科技写作 Skill | `已完成` | `docs/skills/tutorial-tech-writing/SKILL.md` 统一出版级润色规则。 | 2026-08-22 |
 
 ## P1：知识基础
 
