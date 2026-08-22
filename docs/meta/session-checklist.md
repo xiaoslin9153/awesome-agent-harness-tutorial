@@ -16,7 +16,7 @@
 - [ ] 确认本次每个提交只包含一个可独立说明的小点。
 - [ ] 自 Review 完整 diff，移除无关修改、调试残留和不安全文件。
 - [ ] 检查 Markdown 标题、链接、表格、代码块和 Front Matter。
-- [ ] 如果修改公开教材，确认已执行 Polish Agent 和 Implementation Review Agent，并在 Front Matter 记录结果。
+- [ ] 如果修改公开教材，确认已执行 Polish Agent；Implementation Review Agent 可在批量草稿模式下延后，但 Front Matter 必须记录 `pending` 和待核对清单。
 - [ ] 如果章节包含理论或框架行为，确认有流程图、类图或表格，并区分理想设计与真实实现。
 - [ ] 确认没有提交 `external/`、构建产物、密钥或 `.DS_Store`。
 - [ ] 推送后确认本地与远端同步。
