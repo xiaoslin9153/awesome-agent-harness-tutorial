@@ -16,7 +16,7 @@ review:
     agent: main-agent
     date: 2026-08-23
     verdict: pass
-    summary: 已按学习契约重组双读者结构，保留因果链和源码深拆，删除装饰性表达。
+    summary: 已按学习契约重组双读者结构，并完成第二遍语言润色，降低列表腔和翻译腔。
   implementation:
     agent: main-agent
     date: 2026-08-23
@@ -29,22 +29,22 @@ review:
 
 ## 上一章遗留问题
 
-这是第一章第一节。读者带着一个常见误解进入本书：「只要有一个调用模型的循环，就得到了 Agent」。这个说法只描述了推理循环，没有回答三个工程问题：
+很多人第一次实现 Agent 时，都会从一个看似成立的判断出发：只要让模型不断调用工具，就得到了一个 Agent。这个循环确实能跑起来，但它回避了三个更麻烦的问题：
 
 1. 谁决定下一步动作？
 2. 谁保证动作只在被允许的边界内发生？
 3. 谁保存事实，让系统在失败后仍能解释发生过什么？
 
-本章先建立职责边界，后续章节才能继续讨论 Run 状态由谁迁移、事件由谁发布、工具副作用由谁审批。
+这三个问题分别指向状态、控制面和审计。本章先把职责边界讲清楚；后面讨论 Run 生命周期时，才能准确回答状态由谁迁移、事件由谁发布、副作用由谁审批。
 
 ## 本章解决什么矛盾
 
-核心矛盾是「模型会提出下一步」与「系统必须受控地执行下一步」之间的张力。
+真正的张力在这里：模型擅长根据上下文提出下一步，系统却必须保证每一步都落在允许的边界内。
 
-- 如果把决策和执行混在一个不可审计的循环里，一次错误工具调用就会直接改变文件、进程或外部服务。
-- 如果为了安全把所有逻辑都塞进静态策略，系统又会失去根据观察结果调整行动的能力。
+- 如果决策和执行挤在同一个不可审计的循环里，一次错误调用就可能直接改动文件、进程或外部服务。
+- 反过来，如果把所有行为都锁死在静态规则里，系统又失去了根据观察调整行动的能力。
 
-因此，理想设计不是给三层各起一个目录名，而是把**决策权、控制权和资源承载**分开：
+所以理想设计不是给三层各起几个目录，而是把三种能力拆开：有人负责决定，有人负责约束和记录，有人提供真实资源。
 
 | 层 | 核心问题 | 拥有什么 |
 | --- | --- | --- |
@@ -56,10 +56,10 @@ review:
 
 本章建立两条不变量：
 
-1. **未授权副作用不得执行。** 模型可以提议调用工具，但真正执行前必须经过 Harness 的校验、授权和分发。
-2. **权威事实必须有明确所有者。** 用户消息、模型输出、工具结果、审批决定和状态迁移都要有可追踪来源；UI 或内存中的临时投影不能替代权威日志。
+1. **未授权副作用不得执行。** 模型可以提议调用工具；在 Harness 校验、授权并分发之前，这只是一个意图。
+2. **权威事实必须有明确所有者。** 用户消息、模型输出、工具结果、审批决定和状态迁移都要能追溯到来源。界面显示的内容和内存里的临时状态，都不能替代权威日志。
 
-后面章节会反复检查：Context 是权威日志的投影，事件是状态变化的投影，Checkpoint 只能包含闭合事实。如果这一章没有区分决策者、控制面和承载环境，这些后续不变量就无法落地。
+后面章节会反复回到这两条：Context 是权威日志的投影，事件是状态变化的投影，Checkpoint 只能包含闭合事实。如果没有先把决策者、控制面和承载环境分开，这些说法很容易变成口号。
 
 ## 理想模型
 
@@ -84,24 +84,22 @@ sequenceDiagram
   H-->>U: 权威状态的对外投影
 ```
 
-图中的关键点不是箭头数量，而是所有副作用都经过 Harness 这个控制面。Runtime 不理解任务目标；Agent 不能因为「知道某个工具」就直接越过控制面。
+这张图的关键不是箭头数量，而是所有副作用都要穿过中间那个控制面。Runtime 不需要理解任务目标；Agent 也不能因为「模型知道某个工具」，就绕过校验直接执行。
 
 ## 初学者主线
 
-把系统想象成一个受控实验室：
+可以把这套系统想象成一个受控实验室。
 
-1. **Agent 像实验设计师**：根据目标和已有证据，提出下一步实验。
-2. **Harness 像实验室管理员**：确认申请、准备材料、检查防护、记录日志，并把结果交回设计师。
-3. **Runtime 像实验室设施**：提供水电、通风和仪器，但不知道这次实验要证明什么。
+Agent 是实验设计师：根据目标和已有证据，提出下一步该做什么实验。Harness 是实验室管理员：确认申请、准备材料、检查防护、记录过程，再把结果交回设计师。Runtime 是实验室设施：提供水电、通风和仪器，但并不关心这次实验想证明什么。
 
-一个只有「发 prompt、收文本」的程序是模型客户端。它缺少至少四类 Harness 能力：
+按照这个标准，「发 prompt、收文本」的程序只是模型客户端。它至少缺四类 Harness 能力：
 
 1. 工具契约和参数校验。
 2. 权限、审批和沙箱边界。
 3. 权威状态与事件记录。
 4. 失败分类、重试、取消和恢复。
 
-这四项不是可选插件。只要程序会修改文件、执行命令、访问网络或多步推进任务，它们就会决定系统是否可信。
+这四项不是可以以后再补的插件。程序一旦要修改文件、执行命令、访问网络，或者连续多步推进任务，它们就直接决定了系统能不能被信任。
 
 ## 机制深拆
 
@@ -109,14 +107,14 @@ sequenceDiagram
 
 Agent 的输入通常包括目标、历史观察、可用工具契约和运行约束。它的输出不是「已经完成的动作」，而是结构化意图，例如 `tool_call`、最终答案或结束信号。
 
-这个区别很重要：
+这里有一个容易忽略的区别：
 
 ```text
 模型输出：{"tool":"write_file","path":"/tmp/a.txt","content":"hi"}
 系统事实：还没有写入任何文件
 ```
 
-只有 Harness 校验参数、获得授权并交给 Runtime 后，「写入」才从意图变成副作用。之后还要把工具结果写回权威日志，模型下一轮看到的才是已发生的观察。
+只有 Harness 校验参数、拿到授权并交给 Runtime 后，这次「写入」才从意图变成真正发生的副作用。工具结果随后还要写回权威日志；下一轮模型看到的，才是已经发生的观察，而不是它自己刚才的想象。
 
 ### 控制面的最小闭环
 
@@ -137,25 +135,25 @@ flowchart TD
   G --> H[交回 Agent 形成新观察]
 ```
 
-这条链保护了本章的核心不变量。任何一个环节缺失，都会产生下面这类故障。
+这条链看起来繁琐，但每个环节都在保护前面的核心不变量。少掉任何一环，就可能出现下面这些事故。
 
 ### 反例与故障模式
 
 **反例 1：把模型客户端当 Agent。**
 
-程序直接把用户文本发给模型，再把回复展示出来。看起来能对话，但没有权威日志和副作用控制。一旦加入「帮我删掉临时文件」的工具，模型输出会被当作命令执行；拒绝原因也不会成为模型可见事实，下一轮仍可能重复危险提议。
+程序直接把用户文本发给模型，再把回复展示出来。它能对话，却没有权威日志，也没有副作用边界。一旦加入「帮我删掉临时文件」这样的工具，模型输出的删除意图很容易被当成命令执行；如果执行被拒绝，拒绝原因也不会回到模型可见的观察里，下一轮它可能继续提出同样的危险请求。
 
 **反例 2：按包名判断安全边界。**
 
-某模块叫 `runtime`，维护者便以为它天然负责隔离。但如果文件路径归上层拼接、网络客户端由工具层创建，这个名字不能阻止越权访问。判断边界要看四个问题：谁能发起副作用、谁校验参数、谁持有凭证、谁限制进程和网络。
+某个模块叫 `runtime`，维护者便默认它天然负责隔离。可如果文件路径其实由上层拼接、网络客户端由工具层创建，这个名字挡不住任何越权访问。判断边界时，与其看名字，不如追问四个事实：谁能发起副作用？谁校验参数？谁持有凭证？谁限制进程和网络？
 
 **反例 3：把 UI 当成 Harness。**
 
-前端弹窗显示「是否允许执行」，但后端工具没有再次校验。攻击者绕过界面直接调用服务端接口后，审批被跳过。UI 只是控制面的一种投影；真正的审批必须在执行路径上生效。
+前端弹出「是否允许执行」，用户点了确认；后端工具却没有再做检查。攻击者只要绕过界面直接调用接口，审批就被完全跳过。UI 只是控制面的一个投影，真正的审批必须长在执行路径上。
 
 **反例 4：本地 CLI 直接改成多租户服务。**
 
-本地版本可以让 Session 绑定当前工作目录和用户身份。服务化后，如果没有把会话所有权、文件根、凭证范围和并发租约移入 Harness，两个请求可能共享同一工作区：一个任务的清理操作会删除另一个任务的中间产物。
+本地 CLI 可以放心地让 Session 绑定当前目录和当前用户。一旦搬进多租户服务，假设仍然成立吗？如果没有把会话所有权、文件根、凭证范围和并发租约交给 Harness 管理，两个请求可能共享同一个工作区。这时一个任务的清理操作，足以删除另一个任务的中间产物。
 
 ### 一条完整因果链
 
@@ -167,7 +165,7 @@ flowchart TD
 4. **可观察结果**：模型收到明确的越界错误；用户界面显示该次尝试被拒绝。
 5. **后续影响**：模型可以在下一轮选择工作区内路径，而不是误以为写入成功。
 
-如果第 3 步只把错误打印到终端，不写入模型可见观察和持久日志，就会出现两类事故：模型重复尝试相同路径；事后审计无法解释为什么某些文件没有被修改。
+假如第 3 步只把错误打印到终端，既没有写进模型可见观察，也没有持久保存，事故会分两路发生：模型下一轮继续尝试同一条路径；事后审计则无法解释为什么某些文件没有被修改。
 
 ## 设计取舍
 
@@ -182,7 +180,7 @@ flowchart TD
 
 ## 框架实现对照
 
-三家项目都证明：这些边界是**逻辑职责**，不一定等于目录名或包名。同一个包可能同时承担 Agent 循环和部分 Harness 能力；关键是看装配关系和状态所有权。
+三家项目给出了同一个提醒：这些边界首先是逻辑职责，不一定等于目录名或包名。同一个包完全可以同时装下 Agent 循环和一部分 Harness 能力；关键是追装配关系，看清状态归谁所有。
 
 ### Reasonix
 
@@ -203,9 +201,9 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 }
 ```
 
-`svc` 是注入进来的协作服务，`sess` 是一次会话拥有的运行时状态。`Run` 注释说明它会追加用户输入并驱动工具循环，直到得到最终答案、上下文取消或 Provider 出错（`internal/agent/agent.go:1234-1238`）。
+`svc` 是注入进来的协作服务集合；`sess` 则属于一次会话的运行状态。`Run` 上方的注释写得很清楚：它会追加用户输入，然后驱动工具循环，直到得到最终答案、上下文取消或 Provider 出错（`internal/agent/agent.go:1234-1238`）。
 
-装配点在 `internal/boot/runtime.go:96` 的 `BuildRuntime`。CLI/TUI、桌面和 ACP 前端可以复用这套装配，例如 `internal/cli/acp.go:96` 和仓库根目录下的 `desktop/tab_controller_boot.go:13`。这说明「Runtime」在这里不是纯操作系统概念，而是启动期组合出的 Provider、工具、Session 和宿主适配集合。
+装配入口是 `internal/boot/runtime.go:96` 的 `BuildRuntime`。CLI/TUI、桌面和 ACP 前端都能复用这套装配，例如 `internal/cli/acp.go:96` 与仓库根下的 `desktop/tab_controller_boot.go:13`。所以这里的「Runtime」不是狭义的操作系统运行时，而是启动期组合出来的 Provider、工具、Session 和宿主适配集合。
 
 ### DeepSeek Harness
 
@@ -222,15 +220,15 @@ export interface Agent {
 }
 ```
 
-注释直接指出：`session` 的 log 是 durable source of truth；`inbox` 是 durable pending work 的 Agent 投影；`status` 在每次 `agent/status` 迁移时镜像更新（`runtime-types.ts:69-74`）。
+源码注释说得很直白：`session` 的 log 是 durable source of truth；`inbox` 只是 durable pending work 在 Agent 侧的投影；`status` 则随每次 `agent/status` 迁移同步更新（`runtime-types.ts:69-74`）。
 
-具体驱动者是 `ReactLoopAgent`。构造函数接收 `id`、`options` 和 `session`，从 Session 事件里找最后一个 `turn/start` 初始化 phase，并创建 Inbox 和事件分发器（`packages/core/agent-loop/src/agent.ts:80-97`）。工厂服务 `AgentLoop` 通过依赖注入拿到 `agents`、`sessions`、`llm`、`tools` 和 `systemPrompt`，再创建 `ReactLoopAgent` 并把它放入作用域（`packages/core/agent-loop/src/index.ts:296-297`、`:549-563`）。
+真正驱动流程的是 `ReactLoopAgent`。它的构造函数接收 `id`、`options` 和 `session`，先从 Session 事件里找到最后一个 `turn/start` 来初始化 phase，再创建 Inbox 和事件分发器（`packages/core/agent-loop/src/agent.ts:80-97`）。外层的工厂服务 `AgentLoop` 通过依赖注入拿到 `agents`、`sessions`、`llm`、`tools` 和 `systemPrompt`，然后创建 `ReactLoopAgent` 并放入作用域（`packages/core/agent-loop/src/index.ts:296-297`、`:549-563`）。
 
-这个设计的精妙之处是把「权威事实」和「运行中投影」分开：Agent 可以有内存中的 phase 和 Inbox 投影，但恢复语义回溯到持久 Session 日志。
+这个设计的好处在于，它把「权威事实」和「运行中投影」明确分开：Agent 手里有内存中的 phase 和 Inbox 投影，可一旦要谈恢复，语义仍要回到持久 Session 日志。
 
 ### Pi
 
-Pi 分成通用 `packages/agent` 和领域侧 `packages/coding-agent`。通用 `Agent` 自己声明为低层循环的有状态包装：
+Pi 把通用能力和领域能力分成两层：通用循环放在 `packages/agent`，Coding 场景放在 `packages/coding-agent`。通用 `Agent` 的定位也很清楚——低层循环之上的有状态包装：
 
 ```ts
 // packages/agent/src/agent.ts:167-181 @ c49906e
@@ -244,11 +242,11 @@ export class Agent {
 }
 ```
 
-Coding SDK 在 `createAgentSession` 中注入模型流函数、扩展上下文转换、重试设置、Session ID 和 steering / follow-up 模式（`packages/coding-agent/src/core/sdk.ts:304-370`）。随后用 Session Manager、Settings Manager、cwd、自定义工具和 Extension Runner 创建 `AgentSession`（`sdk.ts:386-400`）。
+Coding SDK 在 `createAgentSession` 里注入模型流函数、扩展上下文转换、重试设置、Session ID 以及 steering / follow-up 模式（`packages/coding-agent/src/core/sdk.ts:304-370`）。随后再用 Session Manager、Settings Manager、cwd、自定义工具和 Extension Runner 组出 `AgentSession`（`sdk.ts:386-400`）。
 
-工具控制面通过回调挂到通用 Agent 上：`AgentSession._installAgentToolHooks()` 设置 `beforeToolCall`，读取当时的 `_extensionRunner` 并发出 `tool_call` 事件；扩展失败会阻断执行（`core/agent-session.ts:484-504`）。默认激活的基础工具是 `read`、`bash`、`edit`、`write`，再按配置过滤（`sdk.ts:254-261`）。
+工具控制面通过回调挂到通用 Agent 上：`AgentSession._installAgentToolHooks()` 设置 `beforeToolCall`，每次读取当时的 `_extensionRunner` 并发出 `tool_call` 事件；扩展失败会阻断执行（`core/agent-session.ts:484-504`）。默认激活的基础工具是 `read`、`bash`、`edit`、`write`，最后再按配置过滤（`sdk.ts:254-261`）。
 
-这个分层的收益是通用循环不绑定 Coding 领域；代价是真实控制面分散在 `AgentOptions`、`AgentSession`、Extension Runner 和 Session Manager 之间，读代码时必须沿装配线追。
+这样分层，通用循环不必绑定 Coding 领域；代价是真正的控制面分散在 `AgentOptions`、`AgentSession`、Extension Runner 和 Session Manager 之间。读代码时，必须沿着装配线一路追下去。
 
 ### 对照表
 
@@ -264,21 +262,21 @@ Coding SDK 在 `createAgentSession` 中注入模型流函数、扩展上下文�
 
 **Reasonix：构造期权限不同于交互模式。**
 
-`planMode` 是协作开关，而 `readOnlyExecution` 是构造期防御，生命周期内持续验证代理调用；两者都不替换 permission 或 sandbox 边界（`internal/agent/agent.go:300-308`）。`mutationDependencyBarrier` 还会在第一个持久写入失败或被阻断后，防止后续代理调用靠声明 `ReadOnly()` 绕过屏障（`:310-315`）。它承认一个现实：模型可见的能力标签不能单独作为安全事实。
+Reasonix 把两种容易混淆的「只读」分开了。`planMode` 是协作开关；`readOnlyExecution` 则是构造期防御，在 Agent 的生命周期里持续验证代理调用。两者都不会取代 permission 或 sandbox 边界（`internal/agent/agent.go:300-308`）。更谨慎的是 `mutationDependencyBarrier`：一旦本批工具中第一个持久写入失败或被阻断，它就防止后续调用靠声明 `ReadOnly()` 绕过屏障（`:310-315`）。这个设计承认了一个现实——模型可见的能力标签，不能单独当成安全事实。
 
-代价是状态机更复杂。普通读者不能只看「Plan Mode」理解权限；实现者也要区分交互偏好、构造期能力和跨调用的屏障。
+代价也很明显：权限状态机变得更复杂。读者不能只看「Plan Mode」理解权限；实现者也要同时区分交互偏好、构造期能力和跨调用的屏障。
 
 **DeepSeek Harness：先固定身份，再谈驱动。**
 
-`Agent.id` 与 Session 共享同一个 `SessionId`；`ReactLoopAgent` 从 Session 日志派生 last turn，并把 Inbox 作为 durable work 的投影（`runtime-types.ts:64-76`、`agent.ts:87-96`）。这让取消、恢复和审计可以先锚定到同一条权威历史，而不是散落在多个内存对象里。
+DeepSeek Harness 选择先固定身份，再谈驱动。`Agent.id` 与 Session 共享同一个 `SessionId`；`ReactLoopAgent` 从 Session 日志派生 last turn，并把 Inbox 当作 durable work 的投影（`runtime-types.ts:64-76`、`agent.ts:87-96`）。于是取消、恢复和审计都能先锚定到同一条权威历史，而不是散落在几个内存对象里。
 
-代价是对 Session 写入顺序和 schema 演化要求高。日志一旦含糊，Agent 投影和恢复行为都会失去依据。
+这个选择把压力转给了 Session 层：写入顺序和 schema 演化都必须非常严谨。日志一旦含糊，Agent 投影和恢复行为都会失去依据。
 
 **Pi：用回调把领域策略插进通用循环。**
 
-通用 `Agent` 暴露 `beforeToolCall` 和 `afterToolCall`；Coding 侧把它们接到 Extension Runner。回调每次读取当前 runner，因此扩展热替换后不需要重新安装 hook（`agent-session.ts:476-504`）。这种设计让通用包保持小接口，领域包负责策略。
+Pi 用一组小回调把领域策略插进通用循环。通用 `Agent` 暴露 `beforeToolCall` 和 `afterToolCall`；Coding 侧把它们接到 Extension Runner。由于回调每次都读取当前 runner，扩展热替换后不需要重装 hook（`agent-session.ts:476-504`）。通用包得以保持小接口，策略则留给领域包。
 
-代价是控制流不再集中在一个文件。排查「谁拒绝了工具」时，必须知道通用回调、扩展包装器和 Session 层各自的顺序。
+代价是控制流不再集中在一处。排查「谁拒绝了工具」时，必须弄清通用回调、扩展包装器和 Session 层各自的先后关系。
 
 ## 自检与面试追问
 
@@ -298,7 +296,7 @@ Coding SDK 在 `createAgentSession` 中注入模型流函数、扩展上下文�
 
 ## 交给下一章的问题
 
-本章确定了职责边界，但没有展开一次 Run 内部的完整状态机：
+到这里，职责边界已经清楚；但一次 Run 内部的状态机还没有展开：
 
 - 什么时候算 Run 开始？
 - 模型流式输出进行到一半时，系统处于什么状态？
