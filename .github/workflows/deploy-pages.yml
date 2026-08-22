@@ -30,6 +30,9 @@ jobs:
         working-directory: site
         env:
           SITE_BASE_URL: /${{ github.event.repository.name }}/
+      - name: Check markdown links
+        run: npm run check:links
+        working-directory: site
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site/dist

@@ -35,6 +35,8 @@
 
 两个 Agent 的职责、输入、输出和验收标准定义在 `tutorial/writing-pipeline.md`。公开章节必须在 Front Matter 中记录两个阶段的结果。
 
+每次公开教材变更推送到 `main` 后，由 Deploy Subagent 执行线上部署检查。其职责和输出接口也定义在 `tutorial/writing-pipeline.md`。
+
 ## 最小改动与提交纪律
 
 1. 一次会话可以包含多个主题，但一次提交只处理一个可独立说明的小点，例如一个机制、一条决策、一份索引或一处修正。
@@ -45,7 +47,8 @@
    - 确认没有提交 `external/`、构建产物、私有研究材料或 `.DS_Store`。
    - 确认没有提交凭证、token、私钥内容、密钥文件名、密钥路径或公钥指纹。
    - 确认会话记录已经反映本次变更。
-3. Commit message 使用 Conventional Commits；类型优先使用 `docs`、`chore`、`feat` 或 `fix`。
+3. 提交前在本地运行 `cd site && npm run check:links` 验证教材内链接无断链。
+4. Commit message 使用 Conventional Commits；类型优先使用 `docs`、`chore`、`feat` 或 `fix`。
 4. 不允许把多个机制分析合并成一次大提交；如果已经发生，必须在后续记录中拆分说明，不强行重写历史。
 
 ## 部署前检查

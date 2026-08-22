@@ -221,3 +221,62 @@ flowchart TD
 ```
 
 禁止把理想模型直接写成某家框架的事实。
+
+## Deploy Subagent
+
+每次提交推送后，由 Deploy Subagent 负责验证线上站点是否正确更新。
+
+### 职责
+
+1. 检查 GitHub Actions 最新 run 是否 `completed` 且 `conclusion == success`。
+2. 检查根路径 HTTP 200。
+3. 检查新增或修改的页面路由 HTTP 200。
+4. 检查页面 HTML 中包含预期的标题、Mermaid `<div>` 或关键内容片段。
+5. 如果部署失败，记录 Actions URL、失败步骤、日志摘要和下一步修复建议。
+
+### 输出接口
+
+```yaml
+deploy_check:
+  agent: deploy-agent
+  date: YYYY-MM-DD
+  commit: git SHA
+  workflow_status: success | failure | in_progress
+  checks:
+    - path: /
+      status: 200
+    - path: /zh-CN/00-overview/
+      status: 200
+      contains: "Agent Harness 学习指南"
+  verdict: pass | fail
+  notes: 可选补充说明。
+```
+
+### 验收标准
+
+- 所有检查路径返回 HTTP 200。
+- 页面内容包含本次变更的关键标记（标题、图表或文本片段）。
+- 如果失败，必须在会话记录中写明根因和修复动作，不允许静默忽略。
+
+## Agent 协作模式
+
+Goal 模式下每小节的执行流程：
+
+```text
+作者（主 Agent）撰写 Draft
+→ Polish Agent 审查语言
+→ Implementation Review Agent 审查事实与源码偏差
+→ 主 Agent 根据反馈修正
+→ 主 Agent 提交并推送（最小改动）
+→ Deploy Subagent 验证线上部署
+→ 主 Agent 更新进度表和会话记录
+→ 进入下一小节
+```
+
+三个 Subagent 的职责边界：
+
+| Agent | 关注点 | 不负责 |
+| --- | --- | --- |
+| Polish Agent | 语言清晰度、结构、术语统一 | 事实正确性 |
+| Implementation Review Agent | 源码证据、版本、行为一致性 | 文风 |
+| Deploy Subagent | 构建成功、URL 可达、内容上线 | 内容质量 |

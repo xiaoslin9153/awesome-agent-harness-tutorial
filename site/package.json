@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "node build.mjs"
+    "build": "node build.mjs",
+    "check:links": "node ../scripts/check-links.mjs"
   },
   "dependencies": {
     "mermaid": "^11.17.0"

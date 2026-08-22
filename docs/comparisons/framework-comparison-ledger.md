@@ -62,6 +62,8 @@
 
 三个标准对象已确定并完成浅克隆。尚无机制级结论。
 
+证据索引模板位于 `docs/comparisons/evidence/template.md`。每个维度的分析必须复制该模板，填入具体框架和 commit 后保存为 `docs/comparisons/evidence/C{XX}-{framework}.md`。
+
 已验证事实：
 
 1. Reasonix 本地快照包含 5,175 个文件，其中 Markdown 文档 242 个，主要源码文件约 4,319 个。

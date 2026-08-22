@@ -23,6 +23,11 @@ flowchart TD
   E --> F[实验与面试]
 ```
 
+## 章节导航
+
+- [教材目录](./TOC.md) — 全部章节的路径、依赖和状态。
+- [术语表](./09-glossary/glossary.md) — 中英对照术语定义。
+
 1. **建立心智模型**：区分模型、Agent、Harness、Runtime、工具、应用和基础设施。
 2. **理解一次 Run**：从输入、上下文组装、工具执行、事件流到恢复与结束。
 3. **拆解主流实现**：用同一套维度分析 Reasonix、DeepSeek Harness 和 Pi。

@@ -45,6 +45,10 @@
 | G13 | 修复项目 Pages 基础路径 | `已完成` | 构建支持 `SITE_BASE_URL`；Actions 注入仓库名前缀。 | 2026-08-22 |
 | G11 | 建立教材双 Agent 写作流水线 | `进行中` | 已定义 Polish 与 Implementation Review 规范，待站点图渲染验证。 | 2026-08-22 |
 | G12 | 建立教材配图与双读者标准 | `进行中` | 已定义 Mermaid 与理想设计对照规范，待构建验证。 | 2026-08-22 |
+| G14 | 建立完整章节目录与路径映射 | `已完成` | `tutorial/zh-CN/TOC.md` 定义 9 章 50+ 小节。 | 2026-08-22 |
+| G15 | 添加 Deploy Subagent 角色 | `已完成` | `tutorial/writing-pipeline.md` 定义职责和输出接口。 | 2026-08-22 |
+| G16 | 建立 C01-C25 证据索引模板 | `已完成` | `docs/comparisons/evidence/template.md`。 | 2026-08-22 |
+| G17 | 建立 Markdown 链接检查 | `已完成` | `scripts/check-links.mjs`；CI 集成；本地验证通过。 | 2026-08-22 |
 
 ## P1：知识基础
 
@@ -53,8 +57,7 @@
 | K01 | 创建中文教材总览 | `已完成` | `tutorial/zh-CN/00-overview.md` 符合 Front Matter 规范。 | 2026-08-22 |
 | K02 | 定义读者路径和学习地图 | `已完成` | 总览已提供学习路线和目标。 | 2026-08-22 |
 | K03 | 撰写 Agent Run 生命周期 | `未开始` | 覆盖输入到 final answer、trace 和 resume 的主线；必须经过双 Agent 审查。 | 2026-08-22 |
-| K04 | 建立术语表骨架 | `未开始` | 至少覆盖 Session、Run、Turn、Tool Call、Approval、Checkpoint。 | 2026-08-22 |
-| K05 | 定义术语翻译表 | `未开始` | 中英术语一致，避免后续翻译漂移。 | 2026-08-22 |
+| K04/K05 | 建立术语表骨架（含中英对照） | `已完成` | `tutorial/zh-CN/09-glossary/glossary.md` 覆盖核心概念、工具执行、安全、状态和架构模式。 | 2026-08-22 |
 
 ## P2：Harness 机制教材
 
