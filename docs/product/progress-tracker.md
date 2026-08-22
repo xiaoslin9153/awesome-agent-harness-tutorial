@@ -53,6 +53,7 @@
 | G19 | 升级 Polish 中文写作标准与密度检查 | `已完成` | 六条中文规则 + 信息密度检查写入 writing-pipeline.md。 | 2026-08-22 |
 | G20 | 引入项目级科技写作 Skill | `已完成` | `docs/skills/tutorial-tech-writing/SKILL.md` 统一出版级润色规则。 | 2026-08-22 |
 | G21 | 调整 Goal 写作节奏与框架深拆标准 | `已完成` | Implementation Review 延后到批量发布门禁；新增三家框架技术深拆标准。 | 2026-08-22 |
+| G22 | 建立产品未来待办入口 | `已完成` | `docs/product/backlog/README.md` 保存 B-001 目录六部分重构计划。 | 2026-08-22 |
 
 ## P1：知识基础
 
