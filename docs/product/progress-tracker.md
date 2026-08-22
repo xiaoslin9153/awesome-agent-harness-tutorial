@@ -97,6 +97,7 @@
 | K32 | 撰写 Pi Run 生命周期 | `进行中` | `tutorial/zh-CN/03-frameworks/pi/run-lifecycle.md` 已完成 Draft 与 Polish，覆盖事件流与工具批语义。 | 2026-08-22 |
 | K33 | 撰写 Pi 工具与容器化 | `进行中` | `tutorial/zh-CN/03-frameworks/pi/tools-containerization.md` 已完成 Draft 与 Polish，覆盖执行环境、工具链路和三种容器化边界。 | 2026-08-22 |
 | K34 | 撰写架构风格对比 | `进行中` | `tutorial/zh-CN/04-comparisons/architecture.md` 已完成 Draft 与 Polish，覆盖三家控制面、状态所有权、装配入口和扩展点。 | 2026-08-22 |
+| K35 | 撰写 Context 策略对比 | `进行中` | `tutorial/zh-CN/04-comparisons/context.md` 已完成 Draft 与 Polish，覆盖组装、预算、压缩和大结果边界。 | 2026-08-22 |
 
 ## P2：Harness 机制教材
 
@@ -167,7 +168,7 @@
 | ID | 任务 | 状态 | 验收标准 | 最近更新 |
 | --- | --- | --- | --- | --- |
 | X01 | C01-C05 对比 | `进行中` | `architecture.md` 先完成 C01/C02/C17 架构视角对比；其余维度待后续章节补齐。 | 2026-08-22 |
-| X02 | C06-C10 对比 | `未开始` | 上下文策略与工具执行链路可比。 | 2026-08-22 |
+| X02 | C06-C10 对比 | `进行中` | `context.md` 完成 C05/C06/C10 对照；工具协议与执行待 X-03 补齐。 | 2026-08-22 |
 | X03 | C11-C16 对比 | `未开始` | 事件、审批、安全、并发和多 Agent 可比。 | 2026-08-22 |
 | X04 | C17-C20 对比 | `未开始` | 持久化、恢复、失败处理和观测可比。 | 2026-08-22 |
 | X05 | C21-C25 对比 | `未开始` | 扩展、测试、成本、评测和部署可比。 | 2026-08-22 |
