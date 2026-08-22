@@ -27,15 +27,23 @@
 3. 提交前 Review 增加对密钥文件名、路径和指纹的检查。
 4. 维护者已明确批准重写 Git 历史，以消除历史中的旧引用。
 
-## 历史重写阻塞
+## 历史重写执行结果
 
-1. 计划使用 `git filter-repo --replace-text` 替换：
+1. 已使用 `git filter-repo --replace-text` 替换：
    - `[removed-key-identifier]`
    - `~/.ssh/[removed-key-identifier]`
    - 公钥指纹 `[removed-public-fingerprint]`
-2. 本机未安装 `git-filter-repo`。
-3. 安装命令需要写入 Homebrew 前缀，当前无法继续执行。
+2. 重写后扫描确认：原始密钥文件名、路径和指纹在全部本地历史中无残留。
+3. 扫描命中的 `ghp_` 和 `github_pat_` 只是审计文档中的规则说明，不是凭证值。
+4. `filter-repo` 移除 `origin` 后已按仓库约定恢复。
+5. `main` 已 force push 覆盖远端旧历史，并重新跟踪 `origin/main`。
 
-## 解阻条件
+## 结果
 
-维护者手动执行 `brew install git-filter-repo` 后，Agent 可以继续执行已批准的历史重写。
+当前跟踪文件和全部 Git 历史不再包含已识别的密钥文件名、密钥路径和公钥指纹。未发现私钥内容或凭证进入历史。部署状态仍为 `尚未部署`。
+
+## 后续注意
+
+1. 任何旧克隆都包含重写前的历史，必须重新克隆或丢弃。
+2. 不要从旧克隆推送分支到本仓库。
+3. GitHub 可能仍保留不可达对象一段时间；因为本次未发现真实凭证，无需额外作废密钥。
