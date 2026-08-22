@@ -80,6 +80,7 @@
 | K15 | 撰写 Sandbox 与权限 | `进行中` | `tutorial/zh-CN/02-harness-mechanics/sandbox.md` 已完成 Draft 与 Polish，并保留三家框架待审锚点。 | 2026-08-22 |
 | K16 | 撰写 Retry 与幂等 | `进行中` | `tutorial/zh-CN/02-harness-mechanics/retry-idempotency.md` 已完成 Draft 与 Polish，并保留三家框架待审锚点。 | 2026-08-22 |
 | K17 | 撰写 Timeout 与取消 | `进行中` | `tutorial/zh-CN/02-harness-mechanics/timeout-cancellation.md` 已完成 Draft 与 Polish，并保留三家框架待审锚点。 | 2026-08-22 |
+| K18 | 撰写 Checkpoint 与 Resume | `进行中` | `tutorial/zh-CN/02-harness-mechanics/checkpoint-resume.md` 已完成 Draft 与 Polish，并保留三家框架待审锚点。 | 2026-08-22 |
 
 ## P2：Harness 机制教材
 
