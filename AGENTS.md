@@ -1,34 +1,44 @@
-# Agent Working Agreement
+# Agent 工作约定
 
-## Project Goal
+## 项目目标
 
-Build a long-term, publishable learning repository about Agent Harnesses. The repository must preserve product design decisions, framework comparisons, implementation experiments, pitfalls, and interview preparation as durable Markdown records.
+构建一个可长期维护、可发布的 Agent Harness 学习仓库。仓库必须以 Markdown 持久保存产品设计决策、框架拆解、实验、踩坑记录和面试准备材料。
 
-## Required Reading
+## 必读文件
 
-- Before doing any substantive work, read `docs/meta/session-hook.md`.
-- Before updating product scope, framework scope, comparison criteria, or publishing strategy, read `docs/product/product-design.md` and `docs/comparisons/framework-comparison-ledger.md`.
+- 开始实质性工作前，必须阅读 `docs/meta/session-hook.md`。
+- 修改产品范围、框架范围、对比标准或发布策略前，必须阅读 `docs/product/product-design.md` 和 `docs/comparisons/framework-comparison-ledger.md`。
 
-## Session Protocol
+## 内容分层
 
-1. Open or continue the current session entry in `docs/meta/sessions/`.
-2. Record the session goal before making non-trivial changes.
-3. Update the session entry after each meaningful step, including completed work, decisions, evidence, open questions, and next actions.
-4. Before ending the session, complete `docs/meta/session-checklist.md`.
-5. If the session cannot complete a planned step, record the exact blocker and the next concrete action.
+| 类型 | 位置 | 语言策略 | 说明 |
+| --- | --- | --- | --- |
+| 内部治理与产品记录 | `AGENTS.md`、`docs/product/`、`docs/comparisons/`、`docs/meta/` | 仅中文 | 面向维护者，记录目标、决策、证据和会话修订。 |
+| 公开教材 | `tutorial/` | 中文优先，预留多语言接口 | 面向外部读者，后续可发布到 GitHub Pages。 |
+| 实验代码 | `labs/` | 按实验技术栈决定 | 必须能被教材引用，避免把临时脚本混入教材正文。 |
 
-## Documentation Rules
+内部治理和产品修订记录不需要多语言版本。只有 `tutorial/` 下的公开教材内容需要遵循 `tutorial/language-interface.md`。
 
-- Prefer Markdown for durable project knowledge.
-- Keep one idea per document where practical.
-- Use stable filenames and relative links.
-- Do not replace prior conclusions silently; append a dated decision or create a revision section.
-- Mark uncertain claims as `Unverified` and list what evidence is needed.
-- Separate facts from interpretation.
-- Every framework comparison must use `docs/comparisons/framework-comparison-ledger.md` as the canonical criteria source.
-- Every session must leave enough context for another person or agent to resume without asking questions.
+## 会话流程
 
-## Repository Layout
+1. 在 `docs/meta/sessions/` 中打开或继续当前会话记录。
+2. 开始非平凡修改前，先记录本次会话目标。
+3. 每个有意义的步骤后更新会话记录，包括已完成内容、决策、证据、开放问题和下一步。
+4. 会话结束前完成 `docs/meta/session-checklist.md`。
+5. 如果未能完成计划步骤，必须记录确切阻塞原因和下一个具体动作。
+
+## 文档规则
+
+- 持久项目知识优先使用 Markdown。
+- 尽量让一份文档聚焦一个主题。
+- 使用稳定文件名和相对链接。
+- 不允许静默替换既有结论；追加带日期的决策或创建修订章节。
+- 不确定内容必须标记 `未验证`，并列出所需证据。
+- 事实与解释必须分离。
+- 所有框架对比必须以 `docs/comparisons/framework-comparison-ledger.md` 作为唯一标准来源。
+- 每次会话必须留下足够上下文，让其他人或其他 Agent 可以无追问地继续工作。
+
+## 仓库结构
 
 ```text
 AGENTS.md
@@ -37,17 +47,21 @@ docs/
   comparisons/
   meta/
     sessions/
+tutorial/
+  language-interface.md
 ```
 
-## Git And Remote Policy
+`tutorial/` 目录是公开教材的唯一入口。后续网站生成器应从这里读取多语言内容。
 
-- Use Git as the durable history mechanism in addition to Markdown records.
-- Commit only intentional, self-contained changes.
-- Write commit messages using Conventional Commits.
-- Push through the SSH host alias `github.com-personal`, which is configured for GitHub account `xiaoslin9153` with `~/.ssh/[removed-key-identifier]`.
-- Use remote URL `git@github.com-personal:xiaoslin9153/awesome-agent-harness-tutorial.git`.
-- Do not use the default `github.com` alias, because it selects the work identity key instead of this project's personal key.
+## Git 与远端策略
 
-## Current Status
+- 使用 Git 作为 Markdown 记录之外的历史机制。
+- 只提交有意图、自包含的变更。
+- Commit message 使用 Conventional Commits。
+- 通过 SSH 别名 `github.com-personal` 推送，该别名绑定 GitHub 账号 `xiaoslin9153` 和私钥 `~/.ssh/[removed-key-identifier]`。
+- 远端 URL 固定为 `git@github.com-personal:xiaoslin9153/awesome-agent-harness-tutorial.git`。
+- 不使用默认 `github.com` 别名，因为它会选择工作账号密钥。
 
-The repository is in the product-design and knowledge-architecture phase. No framework source analysis has been completed yet.
+## 当前状态
+
+仓库处于产品设计、知识架构和公开教材接口设计阶段。尚无框架源码级拆解结论。

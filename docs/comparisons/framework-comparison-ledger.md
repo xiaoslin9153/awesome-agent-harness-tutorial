@@ -1,69 +1,69 @@
-# Framework Comparison Ledger
+# 框架对比账本
 
-## Status
+## 状态
 
-- Version: v0.1
-- Date: 2026-08-22
-- Canonical scope: Reasonix, DeepSeek Harness (`dsh`), Pi
+- 版本：v0.1
+- 日期：2026-08-22
+- 标准范围：Reasonix、DeepSeek Harness（`dsh`）、Pi
 
-## Purpose
+## 目的
 
-This ledger is the single source of truth for comparison scope, criteria, evidence rules, and current conclusions. New framework observations must be added here or linked from here.
+本账本是对比范围、标准、证据规则和当前结论的唯一事实来源。新的框架观察必须记录在这里或从这里链接。
 
-## Evidence Rules
+## 证据规则
 
-1. Record the framework name, repository or product source, version, commit, and access date.
-2. Separate `Verified`, `Inferred`, and `Unverified` findings.
-3. `Verified` requires a source path, public document, reproducible experiment, or captured transcript.
-4. `Inferred` requires explicit reasoning and the evidence it is based on.
-5. `Unverified` items are hypotheses, not conclusions.
-6. Do not compare different versions as though they have identical behavior.
-7. Update conclusions when the canonical version changes.
+1. 记录框架名称、仓库或产品来源、版本、commit 和访问日期。
+2. 结论必须区分为 `已验证`、`推断`、`未验证`。
+3. `已验证` 需要源码路径、公开文档、可复现实验或捕获的 transcript。
+4. `推断` 需要明确推理过程和依据。
+5. `未验证` 是假设，不能作为结论。
+6. 不允许把不同版本的行为当作相同行为对比。
+7. 标准版本变化时必须更新结论。
 
-## Target Inventory
+## 目标清单
 
-| Framework | Canonical target | Version / commit | Access date | Status | Notes |
+| 框架 | 标准对象 | 版本 / commit | 访问日期 | 状态 | 备注 |
 | --- | --- | --- | --- | --- | --- |
-| Reasonix | Unresolved | Unresolved | Unresolved | Pending | Need to select product, repository, and version. |
-| DeepSeek Harness (`dsh`) | Unresolved | Unresolved | Unresolved | Pending | Need to select repository, release, and protocol version. |
-| Pi | Unresolved | Unresolved | Unresolved | Pending | Need to select implementation and version. |
+| Reasonix | 未确定 | 未确定 | 未确定 | 待处理 | 需要选择具体产品、仓库和版本。 |
+| DeepSeek Harness（`dsh`） | 未确定 | 未确定 | 未确定 | 待处理 | 需要选择仓库、发布版本和协议版本。 |
+| Pi | 未确定 | 未确定 | 未确定 | 待处理 | 需要选择实现和版本。 |
 
-## Comparison Dimensions
+## 对比维度
 
-| ID | Dimension | Core question | Status |
+| ID | 维度 | 核心问题 | 状态 |
 | --- | --- | --- | --- |
-| C01 | Positioning | What execution environment and user surface does it target? | Pending |
-| C02 | Architecture | What are the major components and ownership boundaries? | Pending |
-| C03 | Run lifecycle | How does a run move from input to final result? | Pending |
-| C04 | State model | What states exist and who owns transitions? | Pending |
-| C05 | Context assembly | What is included in the model request and in what order? | Pending |
-| C06 | Context policy | How are history, tools, files, and results compressed or truncated? | Pending |
-| C07 | Prompt strategy | How are system, developer, project, tool, and runtime instructions layered? | Pending |
-| C08 | Tool model | How are tools declared, selected, validated, and dispatched? | Pending |
-| C09 | Tool execution | Where does execution happen and how are side effects controlled? | Pending |
-| C10 | Result handling | How are large, malformed, streaming, and failed results returned? | Pending |
-| C11 | Event model | What events exist, in what order, and with what delivery guarantees? | Pending |
-| C12 | Streaming | How are partial output and tool progress represented? | Pending |
-| C13 | Approval model | Which actions require approval and how is denial handled? | Pending |
-| C14 | Security and sandbox | How are filesystem, network, process, and prompt-injection risks controlled? | Pending |
-| C15 | Concurrency | How are parallel tool calls and sub-agents coordinated? | Pending |
-| C16 | Multi-agent | How are agents spawned, addressed, scoped, and joined? | Pending |
-| C17 | Persistence | What is stored, when, and how is consistency maintained? | Pending |
-| C18 | Resume and cancellation | What can be resumed, retried, rolled back, or must be abandoned? | Pending |
-| C19 | Failure handling | How are model, tool, transport, validation, and state errors handled? | Pending |
-| C20 | Observability | What traces, logs, metrics, and replay artifacts are produced? | Pending |
-| C21 | Extensibility | Which tools, hooks, policies, models, and runtimes can be replaced? | Pending |
-| C22 | Testability | How can model, tools, time, transport, and side effects be mocked or replayed? | Pending |
-| C23 | Cost and latency | How do design choices affect tokens, calls, queueing, and wall time? | Pending |
-| C24 | Evaluation | What task, safety, efficiency, and recovery signals are supported? | Pending |
-| C25 | Deployment | How do CLI, IDE, Web, server, and worker constraints shape design? | Pending |
+| C01 | 定位 | 面向什么执行环境和用户界面？ | 待处理 |
+| C02 | 架构 | 主要组件和职责边界是什么？ | 待处理 |
+| C03 | Run 生命周期 | 一次运行如何从输入走到最终结果？ | 待处理 |
+| C04 | 状态模型 | 存在哪些状态？谁负责状态迁移？ | 待处理 |
+| C05 | 上下文组装 | 模型请求包含什么？顺序是什么？ | 待处理 |
+| C06 | 上下文策略 | 历史、工具、文件和结果如何压缩或截断？ | 待处理 |
+| C07 | Prompt 策略 | System、Developer、项目、工具和运行时指令如何分层？ | 待处理 |
+| C08 | 工具模型 | 工具如何声明、选择、校验和分发？ | 待处理 |
+| C09 | 工具执行 | 执行发生在哪里？副作用如何控制？ | 待处理 |
+| C10 | 结果处理 | 大结果、畸形结果、流式结果和失败结果如何返回？ | 待处理 |
+| C11 | 事件模型 | 有哪些事件？顺序和投递保证是什么？ | 待处理 |
+| C12 | 流式处理 | 部分输出和工具进度如何表示？ | 待处理 |
+| C13 | 审批模型 | 哪些操作需要审批？拒绝后如何处理？ | 待处理 |
+| C14 | 安全与沙箱 | 文件系统、网络、进程和 Prompt Injection 风险如何控制？ | 待处理 |
+| C15 | 并发 | 并行工具调用和子 Agent 如何协调？ | 待处理 |
+| C16 | 多 Agent | Agent 如何生成、寻址、隔离和汇合？ | 待处理 |
+| C17 | 持久化 | 存什么？何时存？如何保证一致性？ | 待处理 |
+| C18 | 恢复与取消 | 什么可以恢复、重试、回滚，什么必须放弃？ | 待处理 |
+| C19 | 失败处理 | 模型、工具、传输、校验和状态错误如何处理？ | 待处理 |
+| C20 | 可观测性 | 产生哪些 Trace、日志、指标和重放数据？ | 待处理 |
+| C21 | 扩展性 | 哪些工具、Hook、策略、模型和 Runtime 可替换？ | 待处理 |
+| C22 | 可测试性 | 模型、工具、时间、传输和副作用如何 Mock 或重放？ | 待处理 |
+| C23 | 成本与延迟 | 设计如何影响 token、调用次数、排队和耗时？ | 待处理 |
+| C24 | 评测 | 支持哪些任务、安全、效率和恢复信号？ | 待处理 |
+| C25 | 部署形态 | CLI、IDE、Web、服务和 Worker 的约束如何影响设计？ | 待处理 |
 
-## Current Working Conclusions
+## 当前结论
 
-No framework-specific conclusion has been verified yet. The first analysis task is to resolve the canonical target and version for each framework.
+尚无已验证的框架级结论。第一项分析任务是确定每个框架的标准对象和版本。
 
-## Decision Log
+## 决策记录
 
-| Date | Decision | Reason | Impact |
+| 日期 | 决策 | 原因 | 影响 |
 | --- | --- | --- | --- |
-| 2026-08-22 | Establish 25 stable comparison dimensions. | Prevent later framework notes from becoming incompatible feature lists. | All future analyses must map findings to C01-C25. |
+| 2026-08-22 | 建立 25 个稳定对比维度。 | 避免后续框架笔记退化为互不兼容的功能清单。 | 后续所有分析必须映射到 C01-C25。 |

@@ -1,25 +1,25 @@
-# Session Checklist
+# 会话检查清单
 
-## Before Ending a Session
+## 会话结束前
 
-- [ ] State the session outcome in one paragraph.
-- [ ] List files created or changed.
-- [ ] Explain decisions and alternatives considered.
-- [ ] Link evidence, commands, experiments, or source paths.
-- [ ] Record unresolved questions.
-- [ ] Define the next concrete action.
-- [ ] Update `docs/product/product-design.md` if scope changed.
-- [ ] Update `docs/comparisons/framework-comparison-ledger.md` if framework scope, evidence, or conclusions changed.
-- [ ] Ensure all claims are marked `Verified`, `Inferred`, or `Unverified` where ambiguity matters.
-- [ ] Mark the session `Completed`, `Paused`, or `Blocked`.
+- [ ] 用一段话说明会话结果。
+- [ ] 列出创建或修改的文件。
+- [ ] 解释决策和考虑过的替代方案。
+- [ ] 链接证据、命令、实验或源码路径。
+- [ ] 记录未解决问题。
+- [ ] 定义下一个具体动作。
+- [ ] 如果范围变化，更新 `docs/product/product-design.md`。
+- [ ] 如果框架范围、证据或结论变化，更新 `docs/comparisons/framework-comparison-ledger.md`。
+- [ ] 在歧义影响理解时，把声明标记为 `已验证`、`推断` 或 `未验证`。
+- [ ] 把会话标记为 `已完成`、`暂停` 或 `阻塞`。
 
-## Definition of a Good Session Record
+## 优秀会话记录的定义
 
-The record is complete when a different contributor can resume without asking:
+记录完成的标准是：其他贡献者无需追问即可理解：
 
-1. What was attempted?
-2. What happened?
-3. What was learned?
-4. What was decided?
-5. What remains?
-6. What should be done first next time?
+1. 尝试了什么？
+2. 发生了什么？
+3. 学到了什么？
+4. 决定了什么？
+5. 还剩什么？
+6. 下次先做什么？

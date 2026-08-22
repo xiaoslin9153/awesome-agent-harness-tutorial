@@ -1,61 +1,61 @@
-# Session Hook
+# 会话钩子
 
-## Purpose
+## 目的
 
-This file defines the minimum recording protocol for every working session. It is the mandatory hook for continuing this project.
+本文件定义每次工作的最低记录协议，是继续本项目的强制入口。
 
-## Session Start
+## 会话开始
 
-1. Read `AGENTS.md`.
-2. Read this file.
-3. Read `docs/product/product-design.md`.
-4. Read `docs/comparisons/framework-comparison-ledger.md`.
-5. Check `docs/meta/sessions/` for an active session entry.
-6. Create or reopen a session entry named `YYYY-MM-DD-short-topic.md`.
-7. Record:
-   - Session goal.
-   - Scope in and out of scope.
-   - Relevant records to update.
-   - Initial assumptions.
-   - Success criteria.
+1. 阅读 `AGENTS.md`。
+2. 阅读本文件。
+3. 阅读 `docs/product/product-design.md`。
+4. 阅读 `docs/comparisons/framework-comparison-ledger.md`。
+5. 检查 `docs/meta/sessions/` 中是否有活动会话。
+6. 创建或重新打开 `YYYY-MM-DD-short-topic.md`。
+7. 记录：
+   - 会话目标。
+   - 范围内和范围外事项。
+   - 需要更新的记录。
+   - 初始假设。
+   - 成功标准。
 
-## During Work
+## 工作过程中
 
-After each meaningful step, update the session entry with:
+每个有意义的步骤后，更新会话记录：
 
-1. What changed.
-2. Why it changed.
-3. Evidence or command output used.
-4. Decisions made.
-5. New assumptions.
-6. Risks or unknowns.
-7. Next action.
+1. 改了什么。
+2. 为什么改。
+3. 使用了什么证据或命令输出。
+4. 做了什么决策。
+5. 出现了哪些新假设。
+6. 风险或未知项。
+7. 下一步动作。
 
-A meaningful step includes creating or changing a record, resolving a scope question, completing an analysis, discovering a blocker, or rejecting a proposed approach.
+创建或修改记录、解决范围问题、完成分析、发现阻塞或否决方案，都属于有意义步骤。
 
-## Framework Work Hook
+## 框架工作钩子
 
-When analyzing Reasonix, DeepSeek Harness, or Pi:
+分析 Reasonix、DeepSeek Harness 或 Pi 时：
 
-1. Record the exact repository, release, commit, and access date.
-2. Record whether each finding is `Verified`, `Inferred`, or `Unverified`.
-3. Link evidence to `docs/comparisons/framework-comparison-ledger.md`.
-4. Record questions that require another version, source file, experiment, or external confirmation.
+1. 记录确切仓库、发布版本、commit 和访问日期。
+2. 每条发现标记 `已验证`、`推断` 或 `未验证`。
+3. 把证据链接到 `docs/comparisons/framework-comparison-ledger.md`。
+4. 记录需要其他版本、源文件、实验或外部确认的问题。
 
-## Session End
+## 会话结束
 
-1. Complete `docs/meta/session-checklist.md`.
-2. Ensure the session entry has:
-   - Final outcome.
-   - Files created or changed.
-   - Decisions and rationale.
-   - Evidence links.
-   - Open questions.
-   - Explicit next action.
-3. Update affected durable records.
-4. Mark the session `Completed`, `Paused`, or `Blocked`.
-5. Do not leave a session in an unstated state.
+1. 完成 `docs/meta/session-checklist.md`。
+2. 确保会话记录包含：
+   - 最终结果。
+   - 创建或修改的文件。
+   - 决策和理由。
+   - 证据链接。
+   - 开放问题。
+   - 明确的下一步动作。
+3. 更新受影响的持久记录。
+4. 将会话标记为 `已完成`、`暂停` 或 `阻塞`。
+5. 不允许把会话留在未声明状态。
 
-## Minimum Quality Bar
+## 最低质量标准
 
-A session record is insufficient if it only says "worked on docs" or "made progress." Another agent or person must be able to understand what happened, why, what remains, and where to resume.
+如果会话记录只写“改了文档”或“有进展”，就是不合格。其他人或 Agent 必须能理解发生了什么、为什么发生、还剩什么，以及从哪里继续。

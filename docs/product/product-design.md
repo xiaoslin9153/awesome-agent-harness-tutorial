@@ -1,171 +1,178 @@
-# Product Design
+# 产品设计
 
-## Status
+## 状态
 
-- Version: v0.1
-- Date: 2026-08-22
-- State: Draft for review
+- 版本：v0.2
+- 日期：2026-08-22
+- 状态：待评审
 
-## Product Positioning
+## 产品定位
 
-A long-term, publishable learning system for Agent Harness engineering. The project is not only a personal notebook; it should become a structured tutorial that explains concepts, compares mainstream implementations, demonstrates runnable experiments, records failure modes, and supports interview preparation.
+构建一个可长期维护、可发布的 Agent Harness 工程学习系统。它不只是个人笔记，而应成为结构化教程：解释概念、对比主流实现、提供可运行实验、记录故障案例，并支持面试准备。
 
-## Target Users
+## 内容分层
 
-1. The repository owner, as the primary learner and maintainer.
-2. Engineers who want to understand how Agent Harnesses work internally.
-3. Interview candidates preparing for Agent platform, runtime, infrastructure, or applied-model engineering roles.
-4. Later public readers through GitHub Pages or another static-site host.
+### 内部记录
 
-## Product Goals
+`docs/product/`、`docs/comparisons/`、`docs/meta/` 和 `AGENTS.md` 只服务维护者，用于记录目标、决策、证据、会话过程和修订历史。这些内容只使用中文，不需要多语言版本。
 
-1. Build a complete mental model of an Agent Harness.
-2. Explain every important mechanism, engineering tradeoff, and common failure mode in enough detail to teach others.
-3. Analyze Reasonix, DeepSeek Harness, and Pi with a consistent methodology.
-4. Extract transferable design patterns rather than producing shallow feature lists.
-5. Create a practical interview question bank with reasoning chains.
-6. Preserve every long-running decision and session outcome in Markdown.
-7. Remain publishable as a static website without requiring a rewrite.
+### 公开教材
 
-## Non-Goals for Now
+`tutorial/` 服务外部读者，是未来 GitHub Pages 的内容源。公开教材以简体中文为默认语言，并通过 `tutorial/language-interface.md` 预留多语言接口。
 
-1. Building a production Agent Harness.
-2. Ranking frameworks by marketing claims.
-3. Reimplementing complete external projects.
-4. Publishing private code, credentials, or confidential material.
-5. Optimizing the public website before the learning content stabilizes.
+## 目标读者
 
-## Content Architecture
+1. 仓库维护者本人，作为第一学习者和内容审校者。
+2. 希望理解 Agent Harness 内部机制的工程师。
+3. 准备 Agent 平台、Runtime、基础设施或模型应用工程岗位的候选人。
+4. 后续通过 GitHub Pages 访问的公开读者。
+
+## 产品目标
+
+1. 建立完整的 Agent Harness 心智模型。
+2. 把每个关键机制、工程取舍和常见故障讲清楚到可教学程度。
+3. 用统一方法拆解 Reasonix、DeepSeek Harness 和 Pi。
+4. 提炼可迁移设计模式，而不是输出浅层功能清单。
+5. 建设带推理链的面试题库。
+6. 用 Markdown 持久保存所有长期决策与会话结果。
+7. 保持教材内容可发布为静态网站，不需要未来重写。
+
+## 当前非目标
+
+1. 构建生产级 Agent Harness。
+2. 根据宣传口径给框架排名。
+3. 完整复刻外部项目。
+4. 发布私有代码、凭证或机密资料。
+5. 在学习内容稳定前过度优化公开网站。
+
+## 教材架构
 
 ```text
-docs/
-  product/
-    product-design.md
-  comparisons/
-    framework-comparison-ledger.md
-  meta/
-    session-hook.md
-    session-checklist.md
-    sessions/
-  00-overview.md
-  01-core-concepts/
-  02-harness-mechanics/
-  03-frameworks/
-  04-comparisons/
-  05-labs/
-  06-case-studies/
-  07-interview/
-  08-evaluation/
-  09-glossary/
+tutorial/
+  language-interface.md
+  zh-CN/
+    00-overview.md
+    01-core-concepts/
+    02-harness-mechanics/
+    03-frameworks/
+      reasonix/
+      deepseek-harness/
+      pi/
+    04-comparisons/
+    05-labs/
+    06-case-studies/
+    07-interview/
+    08-evaluation/
+    09-glossary/
 ```
 
-Directories above are the target structure. They may be created only when the corresponding content exists.
+目录是目标结构，只在对应内容出现时创建。
 
-## Core Learning Tracks
+## 核心学习轨道
 
-### Track 1: Concepts and Mental Models
+### 轨道 1：概念与心智模型
 
-Explain the boundaries between model, agent, harness, runtime, tools, application, and infrastructure. Define session, turn, run, event, tool call, approval, interruption, resume, and trace.
+解释模型、Agent、Harness、Runtime、工具、应用和基础设施的边界。定义 Session、Turn、Run、Event、Tool Call、Approval、Interruption、Resume 和 Trace。
 
-### Track 2: Harness Mechanics
+### 轨道 2：Harness 核心机制
 
-Study prompt assembly, context construction, context compression, tool schemas, tool execution, result truncation, streaming, cancellation, retries, approvals, sandboxing, persistence, checkpointing, observability, memory, workspace access, and multi-agent delegation.
+研究 Prompt 组装、上下文构建、上下文压缩、工具 Schema、工具执行、结果截断、流式输出、取消、重试、审批、沙箱、持久化、Checkpoint、可观测性、记忆、工作区访问和多 Agent 委派。
 
-### Track 3: Framework Dissection
+### 轨道 3：框架拆解
 
-Use one shared template to analyze Reasonix, DeepSeek Harness, and Pi. Each analysis should identify entry points, run loop, context policy, tool protocol, execution model, event model, persistence model, failure handling, security boundary, extension points, and testability.
+用同一模板分析 Reasonix、DeepSeek Harness 和 Pi。每个分析必须识别入口、Run Loop、上下文策略、工具协议、执行模型、事件模型、持久化模型、失败处理、安全边界、扩展点和可测试性。
 
-### Track 4: Horizontal Comparison
+### 轨道 4：横向对比
 
-Compare the three systems mechanism by mechanism. Produce both narrative analysis and a stable comparison table.
+按机制对比三个系统，输出叙事分析和稳定对比表。
 
-### Track 5: Labs and Case Studies
+### 轨道 5：实验与案例
 
-Create minimal experiments for each core mechanism. Record expected behavior, actual behavior, root cause, fix, and transferable lesson.
+为核心机制创建最小实验。记录预期行为、实际行为、根因、修复方式和可迁移经验。
 
-### Track 6: Interview Preparation
+### 轨道 6：面试准备
 
-Build questions across concepts, architecture, implementation, debugging, security, evaluation, and system design. Each question should include the assessment target, reference answer, follow-up chain, and common incorrect answers.
+按概念、架构、实现、调试、安全、评测和系统设计组织问题。每题包含考察点、参考答案、追问链和常见错误答案。
 
-### Track 7: Evaluation and Publishing
+### 轨道 7：评测与发布
 
-Define how to judge harness quality and how to organize the repository for a static-site release.
+定义如何判断 Harness 质量，以及如何组织仓库用于静态站点发布。
 
-## Framework Analysis Template
+## 框架拆解模板
 
-Every framework analysis should answer:
+每个框架分析必须回答：
 
-1. What problem does the harness solve?
-2. What is the entry point and initialization sequence?
-3. What is the agent run loop?
-4. How is the system prompt assembled?
-5. How is context selected, compressed, truncated, and persisted?
-6. How are tools declared, selected, invoked, and results returned?
-7. How are streaming events represented and consumed?
-8. How are approvals, permissions, and sandbox boundaries enforced?
-9. How are retries, timeouts, cancellation, and resume handled?
-10. What is persisted, when, and with what consistency guarantees?
-11. How are errors, partial output, and unsafe states handled?
-12. How is execution observed, traced, replayed, and evaluated?
-13. How are sub-agents, delegation, and parallel work modeled?
-14. What extension points exist?
-15. What is strong, weak, risky, and worth borrowing?
+1. 它解决什么问题？
+2. 入口和初始化顺序是什么？
+3. Agent Run Loop 是什么？
+4. System Prompt 如何组装？
+5. 上下文如何选择、压缩、截断和持久化？
+6. 工具如何声明、选择、调用，结果如何返回？
+7. 流式事件如何表示和消费？
+8. 审批、权限和沙箱边界如何执行？
+9. 重试、超时、取消和恢复如何处理？
+10. 什么内容会被持久化？何时持久化？一致性保证是什么？
+11. 错误、部分输出和不安全状态如何处理？
+12. 执行如何被观测、追踪、重放和评测？
+13. 子 Agent、委派和并行工作如何建模？
+14. 存在哪些扩展点？
+15. 优势、弱点、风险和值得借鉴的设计分别是什么？
 
-## Comparison Dimensions
+## 对比维度
 
-The canonical dimensions are maintained in `docs/comparisons/framework-comparison-ledger.md`.
+唯一标准维护在 `docs/comparisons/framework-comparison-ledger.md`。
 
-## Milestones
+## 里程碑
 
-### Phase 1: Knowledge Foundation
+### 阶段 1：知识基础
 
-- Create product design and comparison ledger.
-- Establish session recording protocol.
-- Write the glossary skeleton.
-- Write the canonical article: "Lifecycle of an Agent Run".
+- 建立产品设计和对比账本。
+- 确定会话记录协议。
+- 建立术语表骨架。
+- 撰写核心文章《一次 Agent Run 的完整生命周期》。
 
-### Phase 2: Harness Mechanics
+### 阶段 2：Harness 核心机制
 
-- Write mechanism chapters for context, tools, events, execution, approval, persistence, cancellation, resume, and observability.
-- Add one minimal lab per mechanism.
+- 为上下文、工具、事件、执行、审批、持久化、取消、恢复和可观测性撰写机制章节。
+- 每个机制至少配置一个最小实验。
 
-### Phase 3: Individual Framework Analysis
+### 阶段 3：单个框架拆解
 
-- Inventory public materials and source code for Reasonix, DeepSeek Harness, and Pi.
-- Complete one architecture map per framework.
-- Record verified code paths and unresolved questions separately.
+- 盘点 Reasonix、DeepSeek Harness 和 Pi 的公开资料与源码。
+- 每个框架完成一份架构图。
+- 分开记录已验证代码路径和未解决问题。
 
-### Phase 4: Horizontal Comparison
+### 阶段 4：横向对比
 
-- Complete the comparison ledger.
-- Publish mechanism-level comparison articles.
-- Extract reusable design patterns and anti-patterns.
+- 完成对比账本。
+- 发布机制级对比文章。
+- 提炼可复用模式和反模式。
 
-### Phase 5: Labs and Interview Bank
+### 阶段 5：实验与题库
 
-- Expand runnable experiments.
-- Build categorized interview questions and answer chains.
-- Add a debugging playbook.
+- 扩展可运行实验。
+- 建设分类面试题和答案链。
+- 补充调试手册。
 
-### Phase 6: Website Release
+### 阶段 6：网站发布
 
-- Choose Astro Starlight or Docusaurus.
-- Generate the site from Markdown.
-- Add navigation, search, versioning, and deployment.
+- 选择 Astro Starlight 或 Docusaurus。
+- 从 Markdown 生成站点。
+- 配置导航、搜索、版本和部署。
 
-## Success Criteria
+## 成功标准
 
-1. A new reader can understand the complete Agent Run lifecycle without prior context.
-2. Each framework analysis uses the same template and separates verified facts from interpretation.
-3. Each core mechanism has at least one reproducible lab or explicit reason why it cannot yet run locally.
-4. Each interview question includes reasoning, follow-ups, and common mistakes.
-5. Session records allow work to resume without losing context.
-6. Markdown can be published as a website with minimal transformation.
+1. 新读者无需先验上下文即可理解完整 Agent Run 生命周期。
+2. 每个框架拆解使用同一模板，并分离已验证事实和解释。
+3. 每个核心机制至少有一个可复现实验，或明确说明为什么当前无法本地运行。
+4. 每道面试题都包含推理、追问和常见错误。
+5. 会话记录能让工作无上下文损失地继续。
+6. 公开教材能以最小转换发布为网站。
+7. 中文是默认阅读语言；其他语言通过稳定接口扩展。
 
-## Open Questions
+## 开放问题
 
-1. Which exact Reasonix repository or product version should be the first analysis target?
-2. Which DeepSeek Harness repository, release, and protocol version should be canonical?
-3. Which Pi implementation and version should be canonical?
-4. Should the public site include Chinese, English, or bilingual content?
-5. Should labs use one shared language and runtime, or adapt to each framework?
+1. Reasonix 的确切产品、仓库或版本是什么？
+2. DeepSeek Harness 应以哪个仓库、发布版本和协议版本为准？
+3. Pi 应以哪个实现和版本为准？
+4. 实验使用统一语言和 Runtime，还是按框架适配？
