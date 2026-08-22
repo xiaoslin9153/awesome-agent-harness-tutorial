@@ -89,6 +89,7 @@
 | K24 | 撰写 Prompt Injection 与工具安全 | `进行中` | `tutorial/zh-CN/02-harness-mechanics/prompt-injection.md` 已完成 Draft 与 Polish，并保留三家框架待审锚点。 | 2026-08-22 |
 | K25 | 撰写 Reasonix 架构总览 | `进行中` | `tutorial/zh-CN/03-frameworks/reasonix/overview.md` 已完成 Draft 与 Polish，覆盖框架深拆必备结构。 | 2026-08-22 |
 | K26 | 撰写 Reasonix Run 生命周期 | `进行中` | `tutorial/zh-CN/03-frameworks/reasonix/run-lifecycle.md` 已完成 Draft 与 Polish，覆盖采样提交边界与恢复语义。 | 2026-08-22 |
+| K27 | 撰写 Reasonix 工具与审批 | `进行中` | `tutorial/zh-CN/03-frameworks/reasonix/tools-approval.md` 已完成 Draft 与 Polish，覆盖工具治理与沙箱审批链路。 | 2026-08-22 |
 
 ## P2：Harness 机制教材
 
