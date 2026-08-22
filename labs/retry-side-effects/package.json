@@ -1,0 +1,9 @@
+{
+  "name": "retry-side-effects-lab",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node src/run.mjs",
+    "test": "node test/retry-side-effects.test.mjs"
+  }
+}
