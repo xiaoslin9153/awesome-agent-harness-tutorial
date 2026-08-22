@@ -49,6 +49,7 @@
 | G15 | 添加 Deploy Subagent 角色 | `已完成` | `tutorial/writing-pipeline.md` 定义职责和输出接口。 | 2026-08-22 |
 | G16 | 建立 C01-C25 证据索引模板 | `已完成` | `docs/comparisons/evidence/template.md`。 | 2026-08-22 |
 | G17 | 建立 Markdown 链接检查 | `已完成` | `scripts/check-links.mjs`；CI 集成；本地验证通过。 | 2026-08-22 |
+| G18 | 支持 Markdown 表格渲染与 TOC 可点击链接 | `已完成` | 构建器解析表格、内联链接、行内代码。 | 2026-08-22 |
 
 ## P1：知识基础
 

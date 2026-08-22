@@ -15,7 +15,17 @@ function escapeHtml(value) {
 }
 
 function renderInline(value) {
-  return escapeHtml(value).replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  const baseURL = process.env.SITE_BASE_URL ?? "/";
+  return escapeHtml(value)
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(
+      /\[([^\]]*)\]\((\.\/[^)]+\.md)\)/g,
+      (_, text, mdPath) => {
+        const route = mdPath.replace(/\.md$/, "").replace(/^\.\//, "");
+        return `<a href="${baseURL}zh-CN/${route}/">${text}</a>`;
+      },
+    )
+    .replace(/`([^`]+)`/g, "<code>$1</code>");
 }
 
 function renderMarkdown(markdown) {
@@ -25,6 +35,26 @@ function renderMarkdown(markdown) {
   let unorderedListItems = 0;
   const html = [];
   let orderedListItems = 0;
+  let tableRows = [];
+
+  function flushTable() {
+    if (tableRows.length === 0) return;
+    const [header, ...bodyRows] = tableRows;
+    html.push("<table><thead><tr>");
+    for (const cell of header) html.push(`<th>${renderInline(cell)}</th>`);
+    html.push("</tr></thead>");
+    if (bodyRows.length > 0) {
+      html.push("<tbody>");
+      for (const row of bodyRows) {
+        html.push("<tr>");
+        for (const cell of row) html.push(`<td>${renderInline(cell)}</td>`);
+        html.push("</tr>");
+      }
+      html.push("</tbody>");
+    }
+    html.push("</table>");
+    tableRows = [];
+  }
 
   for (const line of lines) {
     if (line.startsWith("```")) {
@@ -50,12 +80,14 @@ function renderMarkdown(markdown) {
     const heading = line.match(/^(#{1,6})\s+(.*)$/);
     if (heading) {
       const level = heading[1].length;
+      flushTable();
       html.push(`<h${level}>${renderInline(heading[2])}</h${level}>`);
       continue;
     }
 
     const unorderedItem = line.match(/^\s*[-*]\s+(.*)$/);
     if (unorderedItem) {
+      flushTable();
       if (orderedListItems > 0) {
         html.push("</ol>");
         orderedListItems = 0;
@@ -68,6 +100,7 @@ function renderMarkdown(markdown) {
 
     const orderedItem = line.match(/^\s*\d+\.\s+(.*)$/);
     if (orderedItem) {
+      flushTable();
       if (orderedListItems === 0) html.push("<ol>");
       if (unorderedListItems > 0) {
         html.push("</ul>");
@@ -79,18 +112,38 @@ function renderMarkdown(markdown) {
     }
 
     if (orderedListItems > 0) {
+      flushTable();
       html.push("</ol>");
       orderedListItems = 0;
     }
 
     if (unorderedListItems > 0) {
+      flushTable();
       html.push("</ul>");
       unorderedListItems = 0;
     }
 
+    if (line.trim().startsWith("|") && line.trim().endsWith("|")) {
+      const cells = line
+        .trim()
+        .slice(1, -1)
+        .split("|")
+        .map((c) => c.trim());
+      if (cells.every((c) => /^-{3,}$/.test(c))) continue;
+      if (tableRows.length === 0) {
+        // First data row of the table.
+      }
+      tableRows.push(cells);
+      continue;
+    }
+
+    flushTable();
+
     if (line.trim() === "") continue;
     html.push(`<p>${renderInline(line)}</p>`);
   }
+
+  flushTable();
 
   return html.join("\n");
 }
@@ -177,9 +230,7 @@ for (const sourcePath of markdownFiles) {
 }
 
 const zhHomeRoute = `${baseURL}zh-CN/00-overview/`;
-const zhHomeExists = pages.some(
-  (page) => page.route === zhHomeRoute,
-);
+const zhHomeExists = pages.some((page) => page.route === zhHomeRoute);
 if (!zhHomeExists) throw new Error("Missing Chinese overview page");
 
 await writeFile(
