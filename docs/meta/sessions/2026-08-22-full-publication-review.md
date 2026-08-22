@@ -46,6 +46,10 @@ status: 进行中
 
 目录中的 ✅ 只表示章节初稿与当前验收完成；只有 Implementation Review 通过后才允许把 Front Matter 改为 `published`。术语表 Polish 通过，但保留 Implementation Review 为待审。
 
+### 2026-08-22 执行调整
+
+Goal Agent 因并发 Subagent 过多触发服务商 HTTP 429。后续改为严格串行：主 Agent 先完成单节 Draft，再依次执行 Polish、自检、提交、Deploy 检查和进度同步。任一时刻只保留一个 Subagent；一节完成后才进入下一节。恢复时按 60 秒、120 秒、300 秒退避，上限 900 秒，并从原章节原阶段继续。
+
 ## 开放问题
 
 1. 待运行链接检查和站点构建，确认当前基线是否通过。
