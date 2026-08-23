@@ -81,4 +81,7 @@ status: 已完成
 
 ## 部署检查
 
-- 待提交后填写 Actions run、站点入口和受影响页面结果。
+- 提交：`05959d2 docs: rewrite cost latency`。
+- GitHub Actions：run `32611815327`（Deploy Pages）为 `completed success`。
+- 站点入口 `https://xiaoslin9153.github.io/awesome-agent-harness-tutorial/` 返回 HTTP 200。
+- 受影响页面 `/zh-CN/02-harness-mechanics/cost-latency/` 可访问，并包含标题、TaskBudget、RunBudgetSample 和 UsageRow。
