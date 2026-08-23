@@ -78,4 +78,7 @@ status: 已完成
 
 ## 部署检查
 
-- 待提交后填写 Actions run、站点入口和受影响页面结果。
+- 提交：`82a41b4 docs: rewrite deepseek run lifecycle`。
+- GitHub Actions：run `32614790482`（Deploy Pages）为 `completed success`。
+- 站点入口 `https://xiaoslin9153.github.io/awesome-agent-harness-tutorial/` 返回 HTTP 200。
+- 受影响页面 `/zh-CN/03-frameworks/deepseek-harness/run-lifecycle/` 可访问，并包含标题、max-tokens、turn-stopping 和 sourceEventSeqs。
