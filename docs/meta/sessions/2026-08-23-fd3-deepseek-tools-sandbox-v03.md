@@ -80,4 +80,7 @@ DeepSeek Harness 三章完成。处理 F-P1《Pi 架构总览》。
 
 ## 部署检查
 
-- 待提交后填写 Actions run、站点入口和受影响页面结果。
+- 提交：`5535ac4 docs: rewrite deepseek tools sandbox`。
+- GitHub Actions：run `32615570049`（Deploy Pages）为 `completed success`。
+- 站点入口 `https://xiaoslin9153.github.io/awesome-agent-harness-tutorial/` 返回 HTTP 200。
+- 受影响页面 `/zh-CN/03-frameworks/deepseek-harness/tools-sandbox/` 可访问，并包含标题、SANDBOX_UNAVAILABLE、run_code 和 denial dialect。
