@@ -23,19 +23,19 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: site/package-lock.json
+          cache-dependency-path: site-starlight/package-lock.json
       - run: npm ci
-        working-directory: site
+        working-directory: site-starlight
       - run: npm run build
-        working-directory: site
+        working-directory: site-starlight
         env:
           SITE_BASE_URL: /${{ github.event.repository.name }}/
       - name: Check markdown links
         run: npm run check:links
-        working-directory: site
+        working-directory: site-starlight
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: site/dist
+          path: site-starlight/dist
 
   deploy:
     needs: build
