@@ -99,7 +99,7 @@ flowchart LR
 
 | ID | 标题 | 文件路径 | 依赖 | 状态 |
 | --- | --- | --- | --- | --- |
-| X-01 | [架构风格对比](./04-comparisons/architecture.md) | `04-comparisons/architecture.md` | 第三章 | 🟡 Draft / Polish 已通过；Implementation Review 待批量审查 |
+| X-01 | [架构风格对比](./04-comparisons/architecture.md) | `04-comparisons/architecture.md` | 第三章 | 🟡 已按 v0.3 重写并通过 Polish / Implementation 自检；Implementation Review 待批量终审 |
 | X-02 | [Context 策略对比](./04-comparisons/context.md) | `04-comparisons/context.md` | 第三章 | 🟡 Draft / Polish 已通过；Implementation Review 待批量审查 |
 | X-03 | [工具协议对比](./04-comparisons/tools.md) | `04-comparisons/tools.md` | 第三章 | 🟡 Draft / Polish 已通过；Implementation Review 待批量审查 |
 | X-04 | [安全与审批对比](./04-comparisons/security.md) | `04-comparisons/security.md` | 第三章 | 🟡 Draft / Polish 已通过；Implementation Review 待批量审查 |
