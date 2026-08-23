@@ -134,7 +134,7 @@ flowchart LR
 
 | ID | 标题 | 文件路径 | 依赖 | 状态 |
 | --- | --- | --- | --- | --- |
-| E-01 | Harness 评测框架 | `08-evaluation/evaluation-framework.md` | 第四章 | ⬜ 未开始 |
+| E-01 | [Harness 评测框架](./08-evaluation/evaluation-framework.md) | `08-evaluation/evaluation-framework.md` | 第四章 | 🟡 已按 v0.3 新建并通过 Polish / Implementation 自检；Implementation Review 待批量终审 |
 
 ## 第九章：术语表
 
