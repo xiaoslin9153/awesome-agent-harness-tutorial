@@ -52,4 +52,7 @@ status: 已完成
 
 ## 部署检查
 
-- 待提交后填写 Actions run、站点入口和受影响页面结果。
+- 提交：`75b083e docs: rewrite context comparison`。
+- GitHub Actions：run `32626314360`（Deploy Pages）为 `completed success`。
+- 站点入口 `https://xiaoslin9153.github.io/awesome-agent-harness-tutorial/` 返回 HTTP 200。
+- 受影响页面 `/zh-CN/04-comparisons/context/` 可访问，并包含标题、surface replace、compaction entry 和 unpriced。
