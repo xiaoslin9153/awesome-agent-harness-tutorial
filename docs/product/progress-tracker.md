@@ -2,8 +2,8 @@
 
 ## 状态
 
-- 版本：v0.1
-- 最近更新：2026-08-22
+- 版本：v0.2
+- 最近更新：2026-08-24
 - 用途：本文件是项目整体进度的唯一总览。详细决策看 `docs/product/product-design.md`，框架证据看 `docs/comparisons/framework-comparison-ledger.md`，过程细节看 `docs/meta/sessions/`。
 
 ## 状态定义
@@ -21,11 +21,11 @@
 | 阶段 | 名称 | 目标 | 状态 | 完成标准 |
 | --- | --- | --- | --- | --- |
 | P0 | 基础设施与治理 | 建立 Git、推送、记录、对比和语言接口。 | `进行中` | 核心治理完成；剩余外部仓库同步策略。 |
-| P1 | 知识基础 | 建立概念总纲、术语表和第一篇核心教材。 | `进行中` | 总览、两篇核心概念与 C03 已成稿；C03 事实审查延后。继续补齐 C04。 |
-| P2 | Harness 机制教材 | 完成核心机制章节和实验引用。 | `未开始` | 每个机制有中文章节和至少一个实验或不可运行说明。 |
+| P1 | 知识基础 | 建立概念总纲、术语表和第一篇核心教材。 | `已完成` | 总览、C01-C04 核心概念与 G-01 术语表均按 v0.3 成稿；遗留批量事实审查归入 KR01。 |
+| P2 | Harness 机制教材 | 完成核心机制章节和实验引用。 | `进行中` | 16 篇机制章已按 v0.3 完成初稿升级；批量事实审查待执行。 |
 | P3 | 框架源码拆解 | 完成 Reasonix、DeepSeek Harness、Pi 的机制级拆解。 | `进行中` | 三家 C01-C25 有证据索引和结论。 |
-| P4 | 横向对比 | 输出机制级对比和设计模式。 | `未开始` | 对比账本填完并提炼出模式与反模式。 |
-| P5 | 实验与面试题库 | 建设可运行实验和分类题库。 | `未开始` | 实验可复现；每道题有答案链。 |
+| P4 | 横向对比 | 输出机制级对比和设计模式。 | `进行中` | X-01 至 X-06 六篇对比章已按 v0.3 重写；X05 C21-C25 与可观测性仍待补齐；批量事实审查待执行。 |
+| P5 | 实验与面试题库 | 建设可运行实验和分类题库。 | `进行中` | L/CS/Q/E/G 全部公开章节已按 v0.3 完成初稿升级；批量事实审查待执行。 |
 | P6 | GitHub Pages 发布 | 建立并验证最小静态站点发布链路。 | `进行中` | 本地构建通过；线上页面与新增章节需持续验证。 |
 
 ## P0：基础设施与治理
@@ -39,7 +39,7 @@
 | G05 | 决策发布平台 | `已完成` | GitHub Pages；不用 GitBook。 | 2026-08-22 |
 | G06 | 固化最小提交与提交前 Review | `已完成` | `AGENTS.md` 和会话检查清单。 | 2026-08-22 |
 | G07 | 固化部署检查协议 | `已完成` | 当前状态为“尚未部署”。 | 2026-08-22 |
-| G08 | 建立 Markdown 结构与链接检查 | `未开始` | 需要 CI 或本地脚本。 | 2026-08-22 |
+| G08 | 建立 Markdown 结构与链接检查 | `已废弃` | 被 G17 取代（`scripts/check-links.mjs` 已上线并集成 CI）。 | 2026-08-24 |
 | G09 | 建立外部仓库同步策略 | `未开始` | 需要决定何时更新 shallow clone 和重新锚定版本。 | 2026-08-22 |
 | G10 | 完成密钥信息审计与历史清理 | `已完成` | 全历史无原始密钥标识；详见密钥审计会话。 | 2026-08-22 |
 | G13 | 修复项目 Pages 基础路径 | `已完成` | 构建支持 `SITE_BASE_URL`；Actions 注入仓库名前缀。 | 2026-08-22 |
@@ -65,72 +65,14 @@
 
 | ID | 任务 | 状态 | 验收标准 | 最近更新 |
 | --- | --- | --- | --- | --- |
-| K01 | 创建中文教材总览 | `已完成` | `tutorial/zh-CN/00-overview.md` 符合 Front Matter 规范。 | 2026-08-22 |
-| K02 | 定义读者路径和学习地图 | `已完成` | 总览已提供学习路线和目标。 | 2026-08-22 |
-| K06 | 撰写 Agent、Harness 与 Runtime 边界 | `进行中` | `agent-vs-harness.md` 已按 B-004 重写，并按 v0.3 详实方法论补齐精确定义、宿主环境差异、恢复反例和最小 Harness 迁移路径；共 5 个反例。 | 2026-08-23 |
-| K03 | 撰写 Agent Run 生命周期 | `已完成` | `tutorial/zh-CN/01-core-concepts/agent-run-lifecycle.md` 覆盖输入、流式推理、工具分支、终止和恢复主线，已通过双 Agent 审查。 | 2026-08-22 |
-| K04/K05 | 建立术语表骨架（含中英对照） | `已完成` | `tutorial/zh-CN/09-glossary/glossary.md` 覆盖核心概念、工具执行、安全、状态和架构模式。 | 2026-08-22 |
-| K07 | 撰写 Session、Turn 与状态模型 | `进行中` | `tutorial/zh-CN/01-core-concepts/session-and-state.md` 已完成 Polish 和链接检查；Implementation Review 待批量执行。 | 2026-08-22 |
-| K08 | 撰写事件模型与流式输出 | `进行中` | `tutorial/zh-CN/01-core-concepts/events-and-streaming.md` 已完成 Draft 与 Polish，并保留框架事实待审清单。 | 2026-08-22 |
-| K09 | 撰写 Context 组装与分层 | `进行中` | `tutorial/zh-CN/02-harness-mechanics/context-assembly.md` 已完成 Draft 与 Polish，并保留三家框架待审锚点。 | 2026-08-22 |
-| K10 | 撰写 Context 压缩与截断 | `进行中` | `tutorial/zh-CN/02-harness-mechanics/context-compression.md` 已完成 Draft 与 Polish，并保留三家框架待审锚点。 | 2026-08-22 |
-| K11 | 撰写 Tool Schema 与调用协议 | `进行中` | `tutorial/zh-CN/02-harness-mechanics/tool-schema.md` 已完成 Draft 与 Polish，并保留三家框架待审锚点。 | 2026-08-22 |
-| K12 | 撰写 Tool 执行与副作用 | `进行中` | `tutorial/zh-CN/02-harness-mechanics/tool-execution.md` 已完成 Draft 与 Polish，并保留三家框架待审锚点。 | 2026-08-22 |
-| K13 | 撰写 Tool 结果处理与截断 | `进行中` | `tutorial/zh-CN/02-harness-mechanics/tool-results.md` 已完成 Draft 与 Polish，并保留三家框架待审锚点。 | 2026-08-22 |
-| K14 | 撰写审批模型 | `进行中` | `tutorial/zh-CN/02-harness-mechanics/approval.md` 已完成 Draft 与 Polish，并保留三家框架待审锚点。 | 2026-08-22 |
-| K15 | 撰写 Sandbox 与权限 | `进行中` | `tutorial/zh-CN/02-harness-mechanics/sandbox.md` 已完成 Draft 与 Polish，并保留三家框架待审锚点。 | 2026-08-22 |
-| K16 | 撰写 Retry 与幂等 | `进行中` | `tutorial/zh-CN/02-harness-mechanics/retry-idempotency.md` 已完成 Draft 与 Polish，并保留三家框架待审锚点。 | 2026-08-22 |
-| K17 | 撰写 Timeout 与取消 | `进行中` | `tutorial/zh-CN/02-harness-mechanics/timeout-cancellation.md` 已完成 Draft 与 Polish，并保留三家框架待审锚点。 | 2026-08-22 |
-| K18 | 撰写 Checkpoint 与 Resume | `进行中` | `tutorial/zh-CN/02-harness-mechanics/checkpoint-resume.md` 已完成 Draft 与 Polish，并保留三家框架待审锚点。 | 2026-08-22 |
-| K19 | 撰写 Persistence | `进行中` | `tutorial/zh-CN/02-harness-mechanics/persistence.md` 已完成 Draft 与 Polish，并保留三家框架待审锚点。 | 2026-08-22 |
-| K20 | 撰写 Observability 与 Replay | `进行中` | `tutorial/zh-CN/02-harness-mechanics/observability.md` 已完成 Draft 与 Polish，并保留三家框架待审锚点。 | 2026-08-22 |
-| K21 | 撰写 Memory 与工作区 | `进行中` | `tutorial/zh-CN/02-harness-mechanics/memory-workspace.md` 已完成 Draft 与 Polish，并保留三家框架待审锚点。 | 2026-08-22 |
-| K22 | 撰写 Sub-agent 与并发 | `进行中` | `tutorial/zh-CN/02-harness-mechanics/subagent-concurrency.md` 已完成 Draft 与 Polish，并保留三家框架待审锚点。 | 2026-08-22 |
-| K23 | 撰写成本与延迟 | `进行中` | `tutorial/zh-CN/02-harness-mechanics/cost-latency.md` 已完成 Draft 与 Polish，并保留三家框架待审锚点。 | 2026-08-22 |
-| K24 | 撰写 Prompt Injection 与工具安全 | `进行中` | `tutorial/zh-CN/02-harness-mechanics/prompt-injection.md` 已完成 Draft 与 Polish，并保留三家框架待审锚点。 | 2026-08-22 |
-| K25 | 撰写 Reasonix 架构总览 | `进行中` | `tutorial/zh-CN/03-frameworks/reasonix/overview.md` 已完成 Draft 与 Polish，覆盖框架深拆必备结构。 | 2026-08-22 |
-| K26 | 撰写 Reasonix Run 生命周期 | `进行中` | `tutorial/zh-CN/03-frameworks/reasonix/run-lifecycle.md` 已完成 Draft 与 Polish，覆盖采样提交边界与恢复语义。 | 2026-08-22 |
-| K27 | 撰写 Reasonix 工具与审批 | `进行中` | `tutorial/zh-CN/03-frameworks/reasonix/tools-approval.md` 已完成 Draft 与 Polish，覆盖工具治理与沙箱审批链路。 | 2026-08-22 |
-| K28 | 撰写 DeepSeek Harness 架构总览 | `进行中` | `tutorial/zh-CN/03-frameworks/deepseek-harness/overview.md` 已完成 Draft 与 Polish，覆盖框架深拆必备结构。 | 2026-08-22 |
-| K29 | 撰写 DeepSeek Harness Run 生命周期 | `进行中` | `tutorial/zh-CN/03-frameworks/deepseek-harness/run-lifecycle.md` 已完成 Draft 与 Polish，覆盖 Turn/Step 与流式事件语义。 | 2026-08-22 |
-| K30 | 撰写 DeepSeek Harness 工具与沙箱 | `进行中` | `tutorial/zh-CN/03-frameworks/deepseek-harness/tools-sandbox.md` 已完成 Draft 与 Polish，覆盖工具治理和 Landlock 边界。 | 2026-08-22 |
-| K31 | 撰写 Pi 架构总览 | `进行中` | `tutorial/zh-CN/03-frameworks/pi/overview.md` 已完成 Draft 与 Polish，覆盖框架深拆必备结构。 | 2026-08-22 |
-| K32 | 撰写 Pi Run 生命周期 | `进行中` | `tutorial/zh-CN/03-frameworks/pi/run-lifecycle.md` 已完成 Draft 与 Polish，覆盖事件流与工具批语义。 | 2026-08-22 |
-| K33 | 撰写 Pi 工具与容器化 | `进行中` | `tutorial/zh-CN/03-frameworks/pi/tools-containerization.md` 已完成 Draft 与 Polish，覆盖执行环境、工具链路和三种容器化边界。 | 2026-08-22 |
-| K34 | 撰写架构风格对比 | `进行中` | `tutorial/zh-CN/04-comparisons/architecture.md` 已完成 Draft 与 Polish，覆盖三家控制面、状态所有权、装配入口和扩展点。 | 2026-08-22 |
-| K35 | 撰写 Context 策略对比 | `进行中` | `tutorial/zh-CN/04-comparisons/context.md` 已完成 Draft 与 Polish，覆盖组装、预算、压缩和大结果边界。 | 2026-08-22 |
-| K36 | 撰写工具协议对比 | `进行中` | `tutorial/zh-CN/04-comparisons/tools.md` 已完成 Draft 与 Polish，覆盖定义面、校验治理、并发取消和结果投影。 | 2026-08-22 |
-| K37 | 撰写安全与审批对比 | `进行中` | `tutorial/zh-CN/04-comparisons/security.md` 已完成 Draft 与 Polish，覆盖权限策略、审批语义、隔离边界和注入兜底。 | 2026-08-22 |
-| K38 | 撰写持久化与恢复对比 | `进行中` | `tutorial/zh-CN/04-comparisons/persistence.md` 已完成 Draft 与 Polish，覆盖提交点、投影、分支、取消和崩溃修复。 | 2026-08-22 |
-| K39 | 撰写设计模式与反模式 | `进行中` | `tutorial/zh-CN/04-comparisons/patterns.md` 已完成 Draft 与 Polish，覆盖决策规则、可迁移模式、反模式和迁移检查单。 | 2026-08-22 |
-| K40 | 撰写最小 Agent Run 实验 | `进行中` | `tutorial/zh-CN/05-labs/minimal-run.md` 已完成 Draft 与 Polish；`labs/minimal-run` 三条路径测试通过，两套链接检查通过。Implementation Review 待批量审查。 | 2026-08-22 |
-| K41 | 撰写 Context 膨胀实验 | `进行中` | `tutorial/zh-CN/05-labs/context-bloat.md` 已完成 Draft 与 Polish；`labs/context-bloat` 比较 naive 与 bounded 投影，测试通过且两套链接检查通过。Implementation Review 待批量审查。 | 2026-08-23 |
-| K42 | 撰写 Tool 重试副作用实验 | `进行中` | `tutorial/zh-CN/05-labs/retry-side-effects.md` 已完成 Draft 与 Polish；`labs/retry-side-effects` 覆盖无键重试、幂等重放和状态未知升级，测试通过。Implementation Review 待批量审查。 | 2026-08-23 |
-| K43 | 撰写审批拒绝恢复实验 | `进行中` | `tutorial/zh-CN/05-labs/approval-rejection.md` 已完成 Draft 与 Polish；`labs/approval-rejection` 覆盖批准、拒绝、替代申请和未决失败关闭，测试通过。Implementation Review 待批量审查。 | 2026-08-23 |
-| K44 | 撰写长任务中断恢复案例 | `进行中` | `tutorial/zh-CN/06-case-studies/long-task-recovery.md` 已完成 Draft 与 Polish；`labs/long-task-recovery` 比较无状态重跑、检查点恢复和环境漂移拒绝，测试通过。Implementation Review 待批量审查。 | 2026-08-23 |
+| K00 | 全部公开章节 v0.3 初稿升级（B-004） | `已完成` | 约 45 个公开 Markdown 文件按 v0.3 重写或新建，链接检查和构建均通过；详见 [B-004 记录](../backlog/2026-08-23-tutorial-depth-and-progression.md)。 | 2026-08-23 |
+| KR01 | 批量 Implementation Review | `未开始` | 逐章核对源码锚点存在性、标注事实等级、补齐 evidence_version、修正偏差描述。 | 2026-08-24 |
 
 ## P2：Harness 机制教材
 
-| ID | 机制 | 状态 | 教材章节 | 实验 | 最近更新 |
-| --- | --- | --- | --- | --- | --- |
-| M01 | Run Loop | `未开始` | 缺失 | 缺失 | 2026-08-22 |
-| M02 | 状态模型 | `未开始` | 缺失 | 缺失 | 2026-08-22 |
-| M03 | Context 组装 | `未开始` | 缺失 | 缺失 | 2026-08-22 |
-| M04 | Context 压缩与截断 | `未开始` | 缺失 | 缺失 | 2026-08-22 |
-| M05 | Prompt 分层 | `未开始` | 缺失 | 缺失 | 2026-08-22 |
-| M06 | Tool Schema 与调用 | `未开始` | 缺失 | 缺失 | 2026-08-22 |
-| M07 | Tool 结果处理 | `未开始` | 缺失 | 缺失 | 2026-08-22 |
-| M08 | 流式事件 | `未开始` | 缺失 | 缺失 | 2026-08-22 |
-| M09 | Approval | `未开始` | 缺失 | 缺失 | 2026-08-22 |
-| M10 | Sandbox 与权限 | `未开始` | 缺失 | 缺失 | 2026-08-22 |
-| M11 | Retry 与幂等 | `未开始` | 缺失 | 缺失 | 2026-08-22 |
-| M12 | Timeout 与取消 | `未开始` | 缺失 | 缺失 | 2026-08-22 |
-| M13 | Checkpoint 与 Resume | `未开始` | 缺失 | 缺失 | 2026-08-22 |
-| M14 | Persistence | `未开始` | 缺失 | 缺失 | 2026-08-22 |
-| M15 | Observability 与 Replay | `未开始` | 缺失 | 缺失 | 2026-08-22 |
-| M16 | Memory 与工作区 | `未开始` | 缺失 | 缺失 | 2026-08-22 |
-| M17 | Sub-agent 与并发 | `未开始` | 缺失 | 缺失 | 2026-08-22 |
-| M18 | 成本与延迟 | `未开始` | 缺失 | 缺失 | 2026-08-22 |
+| ID | 任务 | 状态 | 验收标准 | 最近更新 |
+| --- | --- | --- | --- | --- |
+| M00 | 16 篇机制章 v0.3 初稿升级（含在 B-004 内） | `已完成` | `tutorial/zh-CN/02-harness-mechanics/` 下全部 16 章按 v0.3 完成重写；批量事实审查归入 KR01。 | 2026-08-24 |
 
 ## P3：框架源码拆解
 
@@ -138,40 +80,15 @@
 
 | ID | 任务 | 状态 | 说明 | 最近更新 |
 | --- | --- | --- | --- | --- |
-| F00 | 建立 C01-C25 证据索引模板 | `进行中` | 模板已建立；C01/C02 各有部分索引，C03-C25 待补齐。 | 2026-08-22 |
+| F00 | 建立 C01-C25 证据索引模板 | `进行中` | 模板已建立；C01/C02 各有部分索引，C03-C25 待补齐。批量事实审查归入 KR01。 | 2026-08-24 |
 
-### Reasonix
+### 框架页
 
-| ID | 任务 | 状态 | 锚点 | 最近更新 |
+| ID | 任务 | 状态 | 说明 | 最近更新 |
 | --- | --- | --- | --- | --- |
-| FR01 | 架构与入口盘点 | `进行中` | `docs/comparisons/evidence/C01-reasonix.md` 覆盖定位证据。 | 2026-08-22 |
-| FR02 | Run 生命周期定位 | `进行中` | `docs/comparisons/evidence/C02-reasonix.md` 覆盖 Run 主线证据。 | 2026-08-22 |
-| FR03 | 状态模型定位 | `未开始` | `aa82b2f` | 2026-08-22 |
-| FR04 | Context 与工具链路 | `未开始` | `aa82b2f` | 2026-08-22 |
-| FR05 | Approval / Sandbox / Recovery | `未开始` | `aa82b2f` | 2026-08-22 |
-| FR06 | 可借鉴点与坑 | `未开始` | `aa82b2f` | 2026-08-22 |
+| F01 | 9 篇框架页 v0.3 初稿升级（含在 B-004 内） | `已完成` | overview / run-lifecycle / tools 三类 × 三家框架均已按 v0.3 重写；批量事实审查归入 KR01。 | 2026-08-24 |
 
-### DeepSeek Harness
-
-| ID | 任务 | 状态 | 锚点 | 最近更新 |
-| --- | --- | --- | --- | --- |
-| FD01 | Monorepo 与协议盘点 | `进行中` | `docs/comparisons/evidence/C01-deepseek-harness.md` 覆盖定位证据。 | 2026-08-22 |
-| FD02 | Server 与 Run 生命周期定位 | `进行中` | `docs/comparisons/evidence/C02-deepseek-harness.md` 覆盖 Run 主线证据。 | 2026-08-22 |
-| FD03 | Session 与状态模型定位 | `未开始` | `b150a55` | 2026-08-22 |
-| FD04 | Tools / Sandbox / Hooks 链路 | `未开始` | `b150a55` | 2026-08-22 |
-| FD05 | MCP / Jobs / 多 Agent 能力 | `未开始` | `b150a55` | 2026-08-22 |
-| FD06 | 可借鉴点与坑 | `未开始` | `b150a55` | 2026-08-22 |
-
-### Pi
-
-| ID | 任务 | 状态 | 锚点 | 最近更新 |
-| --- | --- | --- | --- | --- |
-| FP01 | Agent / AI / Protocol 盘点 | `进行中` | `docs/comparisons/evidence/C01-pi.md` 覆盖定位证据。 | 2026-08-22 |
-| FP02 | Coding Agent 入口与生命周期 | `进行中` | `docs/comparisons/evidence/C02-pi.md` 覆盖 CLI 主路径生命周期证据。 | 2026-08-22 |
-| FP03 | Session 与事件模型定位 | `未开始` | `c49906e` | 2026-08-22 |
-| FP04 | 工具执行与容器化边界 | `未开始` | `c49906e` | 2026-08-22 |
-| FP05 | Telemetry / Evals / Client | `未开始` | `c49906e` | 2026-08-22 |
-| FP06 | 可借鉴点与坑 | `未开始` | `c49906e` | 2026-08-22 |
+F01 覆盖三家框架的全部 9 篇页面（overview / run-lifecycle / tools 三类 × 三家），不再按框架逐条拆分子任务。
 
 ## P4：横向对比
 
@@ -182,7 +99,7 @@
 | X03 | C11-C16 对比 | `进行中` | X-03 与 X-04 已按 v0.3 覆盖工具协议、并发、审批、安全和注入视角。 | 2026-08-23 |
 | X04 | C17-C20 对比 | `进行中` | X-05 持久化恢复与 X-04 安全审批已按 v0.3 重写；可观测性仍待后续章节补齐。 | 2026-08-23 |
 | X05 | C21-C25 对比 | `未开始` | 扩展、测试、成本、评测和部署可比。 | 2026-08-22 |
-| X06 | 设计模式与反模式 | `进行中` | `patterns.md` 已按 v0.3 重写为六条可迁移模式、十个反模式、七条故障链和迁移检查单；待统一事实审查。 | 2026-08-23 |
+| X06 | 设计模式与反模式 | `进行中` | `patterns.md` 已按 v0.3 重写为六条可迁移模式、十个反模式、七条故障链和迁移检查单；批量事实审查归入 KR01。 | 2026-08-24 |
 
 ## P5：实验与面试题库
 
@@ -190,9 +107,7 @@
 | --- | --- | --- | --- | --- |
 | L01 | 建立 `labs/` 目录规范 | `进行中` | L/CS/Q/E/G 全部公开章节已按 v0.3 完成初稿升级；实验章节均验证命令输出。 | 2026-08-23 |
 | L02 | Mock model / fake tool 基座 | `已完成` | L-01 至 L-04 的 fake model、fake tool、审批服务和离线测试均可确定性重放；公开章节 Implementation Review 仍待批量审查。 | 2026-08-23 |
-| Q01 | 概念与架构题库 | `未开始` | 每题有考察点、参考答案、追问和常见错误。 | 2026-08-22 |
-| Q02 | 实现与调试题库 | `未开始` | 覆盖工具、流式、取消、重试和状态恢复。 | 2026-08-22 |
-| Q03 | 安全与系统设计题库 | `未开始` | 覆盖沙箱、审批、注入、成本和多 Agent。 | 2026-08-22 |
+| Q00 | L/CS/Q/E/G 全部公开章节 v0.3 初稿升级（含在 B-004 内） | `已完成` | 实验、案例、面试题库、评测和术语表均已按 v0.3 重写或新建；批量事实审查归入 KR01。 | 2026-08-24 |
 
 ## P6：GitHub Pages 发布
 
@@ -207,10 +122,9 @@
 
 ## 当前优先级队列
 
-1. B-004 已手动激活：先完成 TOC 学习契约，再重写首批基准章节。
-2. 每个基准小节由主 Agent 串行执行 Draft → Polish → 自检 → 提交推送 → 部署检查 → 进度同步；不创建 Subagent 或并行子任务。
-3. 首批样板获得维护者确认后，再按新门禁批量重写其余章节。
-4. 全部初稿完成后由主 Agent 统一 Implementation Review，最后进入发布检查。
+1. B-004 已完成：全部公开章节 v0.3 初稿升级已交付并部署上线。
+2. 下一步：KR01 批量 Implementation Review——逐章核对源码锚点存在性、标注事实等级、补齐 evidence_version、修正偏差描述。
+3. KR01 完成后进入站点改造（B-002）与发布检查。
 
 ## 维护规则
 
