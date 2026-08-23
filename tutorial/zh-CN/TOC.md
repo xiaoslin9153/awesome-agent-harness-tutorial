@@ -140,7 +140,7 @@ flowchart LR
 
 | ID | 标题 | 文件路径 | 依赖 | 状态 |
 | --- | --- | --- | --- | --- |
-| G-01 | [术语表](./09-glossary/glossary.md) | `09-glossary/glossary.md` | 无 | 🟡 待终审 |
+| G-01 | [术语表](./09-glossary/glossary.md) | `09-glossary/glossary.md` | 全书 | 🟡 已按 v0.3 重写并通过 Polish / Implementation 自检；作为批量终审词汇基准 |
 
 ## 写作顺序
 
