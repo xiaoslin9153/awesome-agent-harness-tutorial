@@ -38,7 +38,7 @@ Pi 低层循环是 `runAgentLoop`：发出 agent_start 和 turn_start，消费 S
 | 主循环 | `runLoop` | 外层处理 follow-up，内层处理工具调用与 Steering。 |
 | 流式请求 | `streamAssistantResponse` | 组装 LLM 请求，转换增量事件，形成完整 AssistantMessage。 |
 | 工具批 | `executeToolCalls` | 按 `toolExecution` 策略执行多个 tool call 并产出结果消息。 |
-| 高层 Agent | `packages/agent/src/agent.ts:173` | 管理 state、订阅者、abort、错误消息和 idle 语义。 |
+| 高层 Agent | `external/pi/packages/agent/src/agent.ts:173` | 管理 state、订阅者、abort、错误消息和 idle 语义。 |
 | 产品会话 | `AgentSession` | 桥接 SessionManager、扩展、压缩、重试、Bash 和 UI。 |
 
 Pi 用事件而不是回调承载过程：`agent_start`、`turn_start`、`message_start/update/end`、`tool_execution_start/end`、`turn_end` 和 `agent_end`。订阅者的 Promise 会按订阅顺序被等待；`agent_end` 之后还要等所有 listener 完成，运行才算 idle。
