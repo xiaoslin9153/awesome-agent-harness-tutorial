@@ -91,7 +91,7 @@ flowchart LR
 | F-D1 | [DeepSeek Harness 架构总览](./03-frameworks/deepseek-harness/overview.md) | `03-frameworks/deepseek-harness/overview.md` | 第二章 | 🟡 已按 v0.3 重写并通过 Polish / Implementation 自检；Implementation Review 待批量终审 |
 | F-D2 | [DeepSeek Harness Run 生命周期](./03-frameworks/deepseek-harness/run-lifecycle.md) | `03-frameworks/deepseek-harness/run-lifecycle.md` | F-D1 | 🟡 已按 v0.3 重写并通过 Polish / Implementation 自检；Implementation Review 待批量终审 |
 | F-D3 | [DeepSeek Harness 工具与沙箱](./03-frameworks/deepseek-harness/tools-sandbox.md) | `03-frameworks/deepseek-harness/tools-sandbox.md` | F-D2 | 🟡 已按 v0.3 重写并通过 Polish / Implementation 自检；Implementation Review 待批量终审 |
-| F-P1 | [Pi 架构总览](./03-frameworks/pi/overview.md) | `03-frameworks/pi/overview.md` | 第二章 | 🟡 Draft / Polish 已通过；Implementation Review 待批量审查 |
+| F-P1 | [Pi 架构总览](./03-frameworks/pi/overview.md) | `03-frameworks/pi/overview.md` | 第二章 | 🟡 已按 v0.3 重写并通过 Polish / Implementation 自检；Implementation Review 待批量终审 |
 | F-P2 | [Pi Run 生命周期](./03-frameworks/pi/run-lifecycle.md) | `03-frameworks/pi/run-lifecycle.md` | F-P1 | 🟡 Draft / Polish 已通过；Implementation Review 待批量审查 |
 | F-P3 | [Pi 工具与容器化](./03-frameworks/pi/tools-containerization.md) | `03-frameworks/pi/tools-containerization.md` | F-P2 | 🟡 Draft / Polish 已通过；Implementation Review 待批量审查 |
 

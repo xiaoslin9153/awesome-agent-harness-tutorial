@@ -1,46 +1,48 @@
 ---
 title: Pi 架构总览
-description: 拆解 Pi 的通用 Agent 内核、coding-agent 装配、Lane 并发和树状会话存储。
+description: 拆解 Pi 固定快照的双层架构——通用 AgentHarness 与 Lane 内核，以及 coding-agent 的 AgentSession 装配、树状 JSONL 会话与 ExecutionEnv 边界。
 lang: zh-CN
 content_status: draft
-source_version: 2026-08-22
+source_version: 2026-08-23
 translations:
   en: null
+learning_contract:
+  inherits: 第二章给出机制理想模型；本章回答 Pi 如何用通用内核加产品装配的双层结构组织会话、工具、并发和执行环境。
+  tension: 通用抽象要被 server 和 SDK 复用；编码产品又需要扩展、TUI 和丰富的资源装载。
+  invariants: 会话是 append-only 树；leaf 指针决定当前分支；AgentSession 常驻订阅驱动持久化；ExecutionEnv 隔离副作用。
+  next_question: Pi 的 Run 循环如何处理流式消息、并行工具与终止批次？
 review:
   polish:
     agent: main-agent
-    date: 2026-08-22
+    date: 2026-08-23
     verdict: pass
-    summary: 已统通用内核、宿主装配、树状会话、Lane 并发和执行环境术语。
+    summary: 已统一通用内核、产品装配、leaf 指针、custom entry 与 ExecutionEnv 术语。
   implementation:
-    agent: pending
-    date: null
-    verdict: pending
-    summary: 批量草稿模式延后事实审查。
-pending_review:
-  - 核对 AgentHarness Lane 生命周期、busy 语义和 reducer 重放。
-  - 核对 SessionManager JSONL header、entry 校验、分支和 compaction。
-  - 核对 ExecutionEnv 文件与 Shell 能力的容器化实现。
-  - 核对 CLI 与 server 装配的工具、扩展和权限差异。
+    agent: main-agent
+    date: 2026-08-23
+    verdict: pass
+    summary: 已核对 AgentSession、SessionManager、AgentHarness 与 ExecutionEnv 类定义和构造契约的固定快照路径。
 ---
 
 # Pi 架构总览
 
 ## 一句话结论
 
-Pi 分两层：`packages/agent` 提供与产品无关的 AgentHarness、Lane、AgentContext 和 ExecutionEnv；`packages/coding-agent` 在其上装配 CLI、server、扩展、SessionManager 和编码工具。它用树状 JSONL 会话保存事实，用 lane 隔离并发活动，用可替换执行环境承载文件与 Shell 副作用。
+Pi 分两层：packages/agent 提供与产品无关的 Agent 循环、AgentHarness 抽象和 ExecutionEnv；packages/coding-agent 在其上装配 AgentSession——聚合 Agent 循环、树状 JSONL SessionManager、SettingsManager、ResourceLoader 与 ExtensionRunner。会话事实保存在 append-only entry 树中：追加创建当前 leaf 的子节点，分支只移动 leaf 指针而永不改写历史。执行副作用被推到 FileSystem 与 Shell 组成的 ExecutionEnv 边界之后。
 
-## 定位与部署形态
+## 上一章遗留问题
 
-仓库按能力拆包：
+F-D3 展示了 DeepSeek Harness 的服务容器与 runner chain。F-P1 回答另一条路线：不用服务容器时，如何让通用内核被 CLI 与 server 复用？分支会话为什么用 leaf 指针而不是复制历史？
 
-- **通用内核**：`packages/agent` 定义 Harness、Lane、session reducer、工具上下文和执行环境抽象。
-- **模型层**：`packages/ai` 抽象模型与请求；`packages/protocol` 定义跨进程协议。
-- **编码产品**：`packages/coding-agent` 聚合资源、扩展、工具、TUI 和 SDK。
-- **宿主**：CLI/TUI 面向本地开发者；`packages/server` 和 coding-agent server 路径面向远端或编辑器集成。
-- **存储与观测**：`session-backends/sqlite-node` 和 `packages/telemetry` 提供可选后端与遥测。
+## 本章解决什么矛盾
 
-CLI 主路径用 `createAgentSession` 创建 `AgentSession`；server 路径用 `createCodingAgentHarness` 创建通用 `AgentHarness`，再把编码工具适配成 Harness 工具。两者不是两个引擎，而是同一抽象上的不同宿主装配。
+编码助手需要 TUI、扩展系统和项目资源装载；协议集成需要可嵌入的纯循环和可替换执行环境。把两者塞进一个类会让内核绑死产品细节，拆成两个包又可能出现两套真相。Pi 的取舍是：
+
+1. 内核（packages/agent）：Agent 循环、AgentHarness、session reducer 与 ExecutionEnv 接口；
+2. 产品（packages/coding-agent）：AgentSession 聚合内核并叠加 SessionManager、扩展与 TUI；
+3. 共享事实：SessionManager 的 append-only 树同时服务两条路径的持久化语义。
+
+直觉上这是发动机加整车。精确机制是 AgentSession 构造函数常驻订阅 Agent 事件（`external/pi/packages/coding-agent/src/core/agent-session.ts:398-400`），把 message_end 翻译为 SessionManager 追加；失效边界是两条宿主路径的能力面不同——AgentHarness.create 对 restore 抛 HarnessNotImplemented（`external/pi/packages/agent/src/harness/agent-harness.ts:347-353`），恢复流程仍由 coding-agent 路径承担。
 
 ## 架构分层
 
@@ -53,113 +55,170 @@ flowchart TD
 
   CLI --> AS[AgentSession]
   Server --> H[AgentHarness]
-  AS --> AG[Agent 循环]
+  AS --> AG[Agent 循环 packages/agent]
   AS --> SM[SessionManager]
   AS --> EX[ExtensionRunner]
-  AS --> TR[Tool Registry / Definitions]
-  H --> Lane[Lane / Reducer]
+  AS --> TR[Tool Registry]
+  H --> Lane[Lane reducer]
   H --> Env[ExecutionEnv]
-  H --> HT[Harness Tools]
-  AG --> Model[Model Runtime]
-  SM --> JSONL[Tree JSONL Session]
-  Env --> FS[FileSystem]
-  Env --> Shell[Shell]
+  AG --> Model[ModelRuntime packages.ai]
+  SM --> Tree[Tree JSONL]
 ```
 
 | 层 | 关键符号 | 职责 |
 | --- | --- | --- |
-| SDK 入口 | `createAgentSession` | 解析 cwd、agent dir、模型、settings、resource loader 和 SessionManager，再创建会话。 |
-| 会话外观 | `AgentSession` | 聚合 Agent、SessionManager、SettingsManager、扩展、工具注册、Steering、压缩和重试。 |
-| 通用 Harness | `AgentHarness` | 管理 Lane、工具、流选项、执行环境和事件流，供 server 等宿主复用。 |
-| 并发单元 | `LaneInfo` / `LaneSnapshot` | 隔离一次活动；busy lane 拒绝冲突操作。 |
-| 会话存储 | `SessionManager` | 维护 append-only entry 树、leaf 指针、分支、标签和模型可见上下文。 |
-| 执行环境 | `ExecutionEnv` | 组合 FileSystem 与 Shell 能力，把工具副作用从核心循环中隔离。 |
+| SDK 入口 | createAgentSession | 解析 cwd、agentDir、settings、resources 并创建 AgentSession |
+| 会话外观 | AgentSession | 聚合 Agent、SessionManager、扩展、Steering、压缩、重试与事件监听 |
+| 通用内核 | packages/agent Agent 循环 | 流式请求、工具执行模式、事件发射 |
+| Harness 抽象 | AgentHarness implements AgentLane | Lane 容器、模型工具队列配置、watch 快照 |
+| 执行环境 | ExecutionEnv extends FileSystem, Shell | 文件与 Shell 能力接口，可替换为容器实现 |
+| 会话存储 | SessionManager | append-only id parentId 树、leaf 指针、buildSessionContext |
 
-## 核心类型
+## 双宿主：AgentSession 与 AgentHarness
 
-| 类型 | 锚点 | 设计意图 |
-| --- | --- | --- |
-| `AgentSession` | `coding-agent/src/core/agent-session.ts:310` | 面向编码产品的高层会话：模型、工具、扩展、Steering、压缩、重试和事件监听。 |
-| `AgentContext` | `agent/src/types.ts:412` | 低层循环可见的系统提示、transcript 和工具集合。 |
-| `AgentTool` / `ToolDefinition` | coding-agent tools 与 agent types | 定义参数、执行函数、详情和 sequential/parallel 模式。 |
-| `AgentHarness` | `agent/src/harness/agent-harness.ts:305` | 通用 Lane 容器与执行面；server 装配使用它而不是 AgentSession。 |
-| `LaneState` / `LaneRecord` | `agent/src/harness/reducer.ts`、`session/types.ts` | 从记录日志重放出 lane 状态，支持恢复和审计。 |
-| `ExecutionEnv` | `agent/src/harness/types.ts:315` | 文件与 Shell 能力的最小接口；容器化或本地实现可替换。 |
-| `SessionManager` | `coding-agent/src/core/session-manager.ts:855` | append-only 树存储；leaf 决定当前分支，分支不修改历史。 |
+### CLI SDK 路径：AgentSession
 
-## 调用链
+AgentSession 是面向编码产品的聚合器。构造时注入 agent、sessionManager、settingsManager 等协作对象（`external/pi/packages/coding-agent/src/core/agent-session.ts:310-314`），并常驻订阅 Agent 事件用于持久化、扩展分发、自动压缩与重试（`external/pi/packages/coding-agent/src/core/agent-session.ts:398-400`）。它自己维护：
 
-### CLI / SDK 路径
+1. steeringMessages 与 followUpMessages 两类排队输入的 UI 投影；
+2. pendingNextTurnMessages 随下一轮用户输入注入的自定义上下文；
+3. isAgentRunActive 与 idle wait 表达活动收敛。
 
-1. **解析环境**：`createAgentSession` 解析 cwd、agent dir、auth、models 和 settings。
-2. **资源装载**：默认 `DefaultResourceLoader` 读取项目与用户资源；已有 Session 时尝试恢复模型。
-3. **会话上下文**：`SessionManager.buildSessionContext()` 从 root 到 leaf 解析消息、压缩摘要和 thinking level。
-4. **创建会话**：装配 Agent、SessionManager、SettingsManager、ModelRuntime、ResourceLoader 和扩展运行时。
-5. **用户回合**：`AgentSession.prompt()` 把输入交给 Agent 循环；Steering 和 follow-up 分别排队。
-6. **工具执行**：循环调用工具定义；扩展可在 before/after 阶段拦截，执行环境提供文件与 Shell 能力。
-7. **持久化**：每条可持久事实成为 SessionManager entry，追加为当前 leaf 的子节点。
+这些字段说明 AgentSession 不只是转发器：它拥有排队策略、扩展协调和资源刷新（M-01 已核对 setActiveToolsByName 重建 system prompt）。
 
-### Server / Harness 路径
+### Server 路径：AgentHarness
 
-`createCodingAgentHarness` 创建通用 Harness 和 `ExecutionToolContext`，把 read、edit、write 等编码工具包装成 Harness 工具，并动态生成包含 cwd、工具列表和 active tool names 的系统提示。客户端通过协议操作 Lane，Harness 将记录写入可 reducer 的日志。
+AgentHarness 实现 AgentLane，name 固定为 main，字段直接对应配置项：durableSession、model、thinkingLevel、activeToolNames、tools、resources、streamOptions、retryPolicy、compactionSettings、steeringMode 和 followUpMode（`external/pi/packages/agent/src/harness/agent-harness.ts:305-345`）。create 是静态入口：查找已有 record 后抛 HarnessNotImplemented 的 create.restore——restore 尚未实现，这一限制被诚实暴露而非隐藏（`external/pi/packages/agent/src/harness/agent-harness.ts:347-353`）。
+
+AgentLane 接口要求 getModel、setModel、getThinkingLevel、setThinkingLevel、getActiveTools、setActiveTools、session SessionTree 和 watch 返回 WatchHandle LaneSnapshot（`external/pi/packages/agent/src/harness/agent-harness.ts:295-303`）。server 宿主通过这组方法操作 lane，而不触碰 coding-agent 内部。
+
+## 会话存储：append-only 树
+
+SessionManager 的类文档就是设计说明书：会话以 append-only 树存储在 JSONL 文件中，每个 entry 有 id 和 parentId 构成树结构；leaf 指针跟踪当前位置；追加创建当前 leaf 的子节点；分支把 leaf 移到较早 entry，允许新分支而不修改历史；buildSessionContext 处理 compaction summary 并沿 root 到 leaf 解析消息列表（`external/pi/packages/coding-agent/src/core/session-manager.ts:845-854`）。
+
+关键结构：
+
+1. fileEntries：磁盘顺序的全部条目；
+2. byId：id 到 entry 的索引；
+3. labelsById 与 labelTimestampsById：标签投影；
+4. leafId：当前分支末端。
+
+追加走 appendEntry：推入 fileEntries、写入 byId、推进 leafId、persist。分支调用后，后续 append 以目标 entry 为 parent——历史永不修改。
 
 ```mermaid
-sequenceDiagram
-  participant H as Host
-  participant S as AgentSession
-  participant A as Agent Loop
-  participant T as Tool / Env
-  participant M as SessionManager
-  H->>S: createAgentSession(options)
-  S->>M: buildSessionContext()
-  H->>S: prompt(input)
-  S->>A: AgentContext
-  A->>S: model stream
-  A->>T: execute tool
-  T-->>A: result + details
-  A-->>S: agent events
-  S->>M: append entries
+flowchart LR
+  R[root] --> A[m1] --> B[m2 tool call] --> C[r1 result] --> D[assistant]
+  B --> E[r1 alt result] --> F[assistant alt]
 ```
 
-## 状态与持久化
+切换分支即移动 leaf 到 m2 下的另一子链；旧链仍在文件中，审计与回溯不丢数据。
 
-SessionManager 把会话保存为 append-only JSONL 树。每个 entry 有 id 和 parentId；追加创建当前 leaf 的子节点，分支把 leaf 移到较早 entry，之后的新工作成为新子链。`buildSessionContext()` 沿 root 到 leaf 重组消息，并处理 compaction summary。
+## 执行环境：ExecutionEnv
 
-这种结构让历史不可变、分支显式：重放不会覆盖旧路径。通用 Harness 侧另有 LaneRecord 日志和 reducer，可从记录重建 LaneState。两层的字段校验、header 格式和 entry_added 可见性属于批量 Implementation Review。
+ExecutionEnv 继承 FileSystem 与 Shell（`external/pi/packages/agent/src/harness/types.ts:314-315`）。Shell 接口的注释明确两个约束：exec 在 FileSystem.cwd 下执行除非 options.cwd 提供；cleanup 必须 best-effort 且不得抛出或拒绝（`external/pi/packages/agent/src/harness/types.ts:304-312`）。
 
-## 工具链路
+这个接口把工具想做什么与在哪里做分离：
 
-工具在 AgentSession 中有基础定义、扩展注册、prompt snippet 和 allowed/excluded 集合。执行时传入 AgentContext 与工具上下文；结果包含模型可见内容和 UI details。`executionMode` 支持 sequential 或 parallel，默认模式由循环决定。
+1. 本地实现直接 spawn 进程；
+2. 容器实现把同一组调用转发到隔离环境；
+3. 测试实现可以内存模拟。
 
-扩展可以注册工具、修改系统提示、拦截调用和结果，并提供 UI 或命令。通用 Harness 工具则通过 `AgentHarnessTool` 与 context source 绑定，server 路径把编码工具适配到 ExecutionEnv。审批、沙箱和容器化细节在 F-P3 展开。
+核心循环与 Harness 工具只见接口不见平台代码——这是 F-P3 讨论容器化时的锚点。
 
-## 扩展点
+## 工具与扩展
 
-| 扩展点 | 入口 | 说明 |
-| --- | --- | --- |
-| 模型 | ModelRuntime 与 `packages/ai` | provider/model/thinking level 可配置，会话可恢复模型。 |
-| 工具 | custom tools、extension registry、Harness tool | 编码工具、用户工具和协议工具可组合。 |
-| 扩展 | ExtensionRunner | 注入 prompt、工具、命令、UI 和生命周期钩子。 |
-| 执行环境 | ExecutionEnv | 替换本地文件/Shell 或容器实现。 |
-| 存储 | SessionManager 与 sqlite backend | JSONL 为核心路径，SQLite 提供可选后端。 |
-| 宿主 | CLI、TUI、server、protocol | 同一核心服务不同交互边界。 |
+AgentSession 的工具来自三处：baseToolDefinitions、SDK custom tools 和 extension registered tools；合并后经 allowed 与 excluded 过滤形成 toolRegistry，active names 去重后交给 setActiveToolsByName（M-03 锚点 agent-session.ts:2588-2679）。每个工具带 promptSnippet 与 promptGuidelines 参与系统提示构建。
+
+ExtensionRunner 在生命周期各点介入：
+
+1. before_agent_start：修改本次 systemPrompt 并追加 custom messages；
+2. tool_call：可 block 或就地 mutate input，无再校验，受信扩展专用；
+3. after_tool_call：覆盖 content details isError；
+4. compaction 与 navigation：参与摘要与分支摘要。
+
+通用 Harness 侧的工具则通过 HarnessTool 绑定 context source，由 server 装配决定映射到哪个 ExecutionEnv。
+
+## 反例与故障模式
+
+1. **绕过 leaf 改历史**
+   - 触发：直接编辑 JSONL 中间行。
+   - 因果：byId 索引与文件不一致，branch 语义崩坏。
+   - 正确边界：一切写入经 appendEntry；修正用新 entry 表达。
+2. **在 AgentHarness 上期待 restore**
+   - 触发：server 路径调用 create 恢复旧会话。
+   - 因果：抛 HarnessNotImplemented。
+   - 正确边界：restore 走 coding-agent 的 SessionManager 路径或等上游实现。
+3. **Shell cleanup 抛错**
+   - 触发：容器实现清理时 reject。
+   - 因果：违反接口契约，上层清理链中断。
+   - 正确边界：best-effort 吞错并记录。
+4. **custom entry 无命名约定**
+   - 触发：多个扩展都用 note 类型。
+   - 因果：消费方无法区分来源，检索歧义。
+   - 正确边界：customType 采用命名空间约定并在扩展间声明。
+5. **leaf 移动后假设工具面不变**
+   - 触发：分支早于某次 setActiveTools。
+   - 因果：新分支沿用当前工具面，与历史上下文不匹配。
+   - 正确边界：需要时在分支后显式重设工具并记录。
+6. **ExecutionEnv 泄漏到内核**
+   - 触发：Agent 循环直接 import node fs。
+   - 因果：无法容器化，测试必须落盘。
+   - 正确边界：内核只依赖接口；实现由宿主注入。
+7. **两套会话概念混用**
+   - 触发：在 AgentHarness 上调用 SessionManager 特有 API。
+   - 因果：类型不存在或语义错位。
+   - 正确边界：分清宿主路径；共享能力通过 SessionTree 抽象。
+8. **Steering 队列跨会话残留**
+   - 触发：切换会话后未清空 steeringMessages。
+   - 因果：旧指令注入新会话。
+   - 正确边界：teardown 时清空队列状态。
+
+## 一条完整因果链
+
+开发者在 CLI 中完成一次重构，然后 fork 出实验分支：
+
+1. createAgentSession 解析 cwd 与 settings，ResourceLoader 装载 AGENTS.md 与 skills；SessionManager 打开既有 JSONL 并迁移到 v3。
+2. 用户提交重构任务；prompt 构建 user message 并注入 pendingNextTurnMessages；Agent 循环开始。
+3. 模型发出 edit_file 加 bash test 调用；file mutation queue 保证同文件串行；结果作为 entry 挂到当前 leaf。
+4. 重构完成后模型总结；message_end 驱动 SessionManager.appendMessage，leaf 前进。
+5. 用户执行 fork 到重构前的一条 entry：SessionManager 仅移动 leafId，不改任何已有行。
+6. 新分支上的实验性修改全部成为新子链 entry；原重构链完整保留。
+7. buildSessionContext 沿 root 到 new leaf 重组消息，遇到 compaction entry 时按 firstKeptEntryId 处理摘要边界。
+8. 若实验失败，用户再 fork 回原链——两次分支都只是 leaf 移动，磁盘上没有任何行被改写。
+
+这条链展示了树状存储的核心价值：分支是元数据操作，不是数据复制。
 
 ## 设计取舍
 
-- **优点**：通用 Harness 与编码产品分离，server 和 CLI 可复用抽象；树状 JSONL 天然支持分支和不可变历史；ExecutionEnv 让容器化边界清晰。
-- **代价**：AgentSession 聚合大量产品职责；通用 Lane、reducer 与编码 SessionManager 有两套相近概念；JSONL 树需要认真处理校验、压缩和迁移。
-- **适用判断**：适合需要多宿主、分支会话和可替换执行环境的编码助手；如果只需要单进程简单循环，两层抽象可能偏重。
+| 方案 | 收益 | 代价 | 适用 |
+| --- | --- | --- | --- |
+| 单一 AgentSession 上帝类 | 开发快 | 无法嵌入其他宿主 | 只做 CLI |
+| 内核产品双包 | 复用清晰 | 两套会话概念并存 | Pi 的选择 |
+| JSONL 树 | 不可变历史天然分支 | 大文件扫描需迁移 | 本地优先 |
+| SQLite 后端 | 查询强 | 引入数据库依赖 | 可选 session backends |
+| leaf 指针分支 | 元数据级操作 | UI 需理解多链 | 需要试错的编码任务 |
+| ExecutionEnv 接口 | 可测试可容器化 | 实现需遵守 cleanup 契约 | 副作用隔离 |
+| ExtensionRunner 全生命周期钩子 | 功能强 | mutate input 无再验证的风险 | 受信扩展 |
 
-## 自检问题
+迁移启示：若要从单体演进，第一步是把文件与 Shell 副作用抽成 ExecutionEnv 接口；第二步把持久化改为 append-only 条目；最后才拆内核与产品包。顺序反了会把产品逻辑焊死在内核里。
 
-1. AgentSession 和 AgentHarness 的职责边界在哪里？
-2. SessionManager 为什么用 leaf 指针而不是修改旧 entry？
-3. LaneBusy 在并发场景中保护了什么？
-4. ExecutionEnv 如何帮助把工具测试从真实文件系统解耦？
+## 自检与面试追问
+
+1. AgentSession 与 AgentHarness 各自的客户是谁？如果要在 IDE 插件中嵌入 Pi，选哪条路径？
+2. 为什么分支不能通过复制历史实现？列出存储与审计两方面的后果。
+3. Shell cleanup 的不得抛出契约如何影响容器实现的重试逻辑？
+4. custom entry 的 customType 应该满足什么命名规则才能避免跨扩展冲突？
+5. 如果要把 sqlite backend 设为默认，哪些调用点需要抽象？SessionManager 的哪些方法成为适配层？
+6. 对照 Reasonix Controller 与 DeepSeek ctx.agents：Pi 的 AgentSession 缺少什么横切能力？补齐的最小改动是什么？
+
+## 交给下一章的问题
+
+本章给出 Pi 的组件地图与存储模型。F-P2《Pi Run 生命周期》将沿 Agent 循环深挖 turn_start、message_update、tool_execution_end 的发射顺序、并行工具的 completion-order 事件与 source-order 结果，以及 coding-agent 的 retry 与 compaction 如何挂接。
 
 ## 相关页面
 
 - [教材目录](../../TOC.md)
-- [Session、Turn 与状态模型](../../01-core-concepts/session-and-state.md)
+- [一次 Agent Run 的完整生命周期](../../01-core-concepts/agent-run-lifecycle.md)
 - [Sub-agent 与并发](../../02-harness-mechanics/subagent-concurrency.md)
+- [Pi Run 生命周期](./run-lifecycle.md)
 - [术语表](../../09-glossary/glossary.md)
