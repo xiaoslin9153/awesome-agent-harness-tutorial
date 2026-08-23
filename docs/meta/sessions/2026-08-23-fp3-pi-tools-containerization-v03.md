@@ -77,4 +77,7 @@ Pi 三章完成，第三章收官。进入第四章 X-01《架构对比》。
 
 ## 部署检查
 
-- 待提交后填写 Actions run、站点入口和受影响页面结果。
+- 提交：`98884a7 docs: rewrite pi tools containerization`。
+- GitHub Actions：run `32617686649`（Deploy Pages）为 `completed success`。
+- 站点入口 `https://xiaoslin9153.github.io/awesome-agent-harness-tutorial/` 返回 HTTP 200。
+- 受影响页面 `/zh-CN/03-frameworks/pi/tools-containerization/` 可访问，并包含标题、mutation queue、Gondolin 和 OpenShell。
