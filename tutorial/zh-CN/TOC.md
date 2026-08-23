@@ -119,7 +119,7 @@ flowchart LR
 
 | ID | 标题 | 文件路径 | 依赖 | 状态 |
 | --- | --- | --- | --- | --- |
-| CS-01 | [长任务中断恢复](./06-case-studies/long-task-recovery.md) | `06-case-studies/long-task-recovery.md` | M-10 | 🟡 Draft / Polish 已通过；Implementation Review 待批量审查 |
+| CS-01 | [长任务中断恢复](./06-case-studies/long-task-recovery.md) | `06-case-studies/long-task-recovery.md` | M-10 | 🟡 已按 v0.3 重写并通过 Polish / Implementation 自检；Implementation Review 待批量终审 |
 | CS-02 | 多 Agent 委派失败 | `06-case-studies/multi-agent-failure.md` | M-14 | ⬜ 未开始 |
 
 ## 第七章：面试题库
