@@ -119,6 +119,9 @@ F01 覆盖三家框架的全部 9 篇页面（overview / run-lifecycle / tools �
 | S04 | GitHub Pages 部署 | `进行中` | Workflow 对最新提交执行成功；继续按每次推送验证。 | 2026-08-22 |
 | S05 | 部署后页面检查 | `进行中` | 入口和总览可访问；`/zh-CN/` 语言索引仍返回 HTTP 404，需在站点改造中修复。 | 2026-08-22 |
 | S06 | 自定义域名（可选） | `未开始` | 如启用，需验证 HTTPS 和回退行为。 | 2026-08-22 |
+| S10 | Starlight 并行原型（B-002 Phase 1） | `未开始` | 新建 `site-starlight/`，配置中文 locale、sidebar（autogenerate 按目录分组）、GitHub Pages base path；验证 Mermaid、表格、链接和 Front Matter 兼容性。 | 2026-08-24 |
+| S11 | 迁移验收（B-002 Phase 2） | `未开始` | Pagefind 中文搜索、导航、深色模式、移动端响应式和 Lighthouse 性能预算全部达标。 | 2026-08-24 |
+| S12 | 替换发布（B-002 Phase 3） | `未开始` | 切换 workflow 构建目录到 Starlight 产物；不维护旧路由重定向；稳定后移除旧构建器。 | 2026-08-24 |
 
 ## 当前优先级队列
 
