@@ -78,7 +78,7 @@ flowchart LR
 | M-12 | [Observability 与 Replay](./02-harness-mechanics/observability.md) | `02-harness-mechanics/observability.md` | M-11 | 观测数据能否重建决策链？ | Trace 必须关联 prompt、工具、事件和版本；敏感数据需脱敏。 | 长期记忆和工作区由谁清理与授权？ | 🟡 已按 v0.3 重写并通过 Polish / Implementation 自检；Implementation Review 待批量终审 |
 | M-13 | [Memory 与工作区](./02-harness-mechanics/memory-workspace.md) | `02-harness-mechanics/memory-workspace.md` | M-12 | 哪些经验可以跨 Run 复用？ | 记忆有来源和有效期；工作区写入受权限和生命周期约束。 | 多个执行流如何共享工具而不互相破坏？ | 🟡 已按 v0.3 重写并通过 Polish / Implementation 自检；Implementation Review 待批量终审 |
 | M-14 | [Sub-agent 与并发](./02-harness-mechanics/subagent-concurrency.md) | `02-harness-mechanics/subagent-concurrency.md` | M-13 | 并行收益是否会放大失控风险？ | 子 Agent 权限不升级；并发写必须有隔离和汇合点。 | 并发如何影响 token、队列和延迟？ | 🟡 已按 v0.3 重写并通过 Polish / Implementation 自检；Implementation Review 待批量终审 |
-| M-15 | [成本与延迟](./02-harness-mechanics/cost-latency.md) | `02-harness-mechanics/cost-latency.md` | M-14 | 质量与预算冲突时降级什么？ | 成本预算是硬边界；降级不能隐藏失败原因。 | 工具输入如何在不可信内容面前保持可控？ | 🟡 Draft / Polish 已通过；Implementation Review 待批量审查 |
+| M-15 | [成本与延迟](./02-harness-mechanics/cost-latency.md) | `02-harness-mechanics/cost-latency.md` | M-14 | 质量与预算冲突时降级什么？ | 成本预算是硬边界；降级不能隐藏失败原因。 | 工具输入如何在不可信内容面前保持可控？ | 🟡 已按 v0.3 重写并通过 Polish / Implementation 自检；Implementation Review 待批量终审 |
 | M-16 | [Prompt Injection 与工具安全](./02-harness-mechanics/prompt-injection.md) | `02-harness-mechanics/prompt-injection.md` | M-15 | 来自数据通道的指令为什么不可信？ | 数据与指令分离；高危动作必须经过策略和沙箱双重约束。 | 三家真实框架如何实现这些机制？ | 🟡 Draft / Polish 已通过；Implementation Review 待批量审查 |
 
 ## 第三章：框架拆解
