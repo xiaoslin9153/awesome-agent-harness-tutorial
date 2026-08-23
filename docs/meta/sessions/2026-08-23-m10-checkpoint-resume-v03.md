@@ -82,4 +82,8 @@ status: 已完成
 
 ## 部署检查
 
-- 待提交后填写 Actions run、站点入口和受影响页面结果。
+- 提交：`92d71c5 docs: rewrite checkpoint resume`。
+- 构建首次因 Front Matter 缺少闭合分隔线失败；修复后 `check:links` 与 build 通过，未触发连续两次失败停止条件。
+- GitHub Actions：run `32609396273`（Deploy Pages）为 `completed success`。
+- 站点入口 `https://xiaoslin9153.github.io/awesome-agent-harness-tutorial/` 返回 HTTP 200。
+- 受影响页面 `/zh-CN/02-harness-mechanics/checkpoint-resume/` 可访问，并包含标题、save-verified、end-seed 和 assertSessionCwdExists。
