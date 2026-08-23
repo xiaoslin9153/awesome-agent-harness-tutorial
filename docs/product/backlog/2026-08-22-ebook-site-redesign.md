@@ -2,9 +2,17 @@
 
 ## 状态
 
-- `待手动激活`
+- `已激活`
 - 创建日期：2026-08-22
+- 激活日期：2026-08-24
 - 执行前提：暂停 Goal Agent，确认 Git 干净并与远端同步。
+
+## 已确认决策（2026-08-24）
+
+1. Mermaid 采用构建期同步渲染为内联 SVG（使用 rehype 插件如 `@beoe/rehype-mermaid`），页面零额外 JavaScript；后续新增章节中的 Mermaid 图自动被同一管线处理。
+2. Sidebar 使用 Starlight config 中的 `autogenerate: { directory: 'zh-CN' }` 按当前目录结构分组；新章节放入对应目录后推送即自动出现在侧边栏。
+3. 内容接入方式：`site-starlight/src/content/docs` symlink 到仓库根的 `tutorial/`，不复制文件。
+4. 允许自动完成 Phase 3 切换发布，无需人工确认原型 URL 后再继续。
 
 ## 背景与目标
 
@@ -64,8 +72,8 @@
 
 1. 新建独立 `site-starlight/` 原型，不删除 `site/`。
 2. 配置站点标题、描述、中文 locale、GitHub Pages base path 和社会卡片。
-3. 用脚本把 `tutorial/zh-CN/**/*.md` 同步或适配到 Starlight 内容集合。
-4. 手动配置当前 TOC 为 sidebar，验证首页、章节页、术语表和 404。
+3. 建立 `site-starlight/src/content/docs` → `tutorial/` 的 symlink 接入内容。
+4. 在 `astro.config.mjs` 中配置 `sidebar.autogenerate.directory: 'zh-CN'` 按目录自动分组，验证首页、章节页、术语表和 404。
 5. 验证 Mermaid、表格、行内代码、相对链接和 Front Matter 兼容性。
 6. 本地检查桌面宽度、iPhone SE 宽度和平板宽度。
 
@@ -110,7 +118,7 @@
 | LCP | ≤ 2.5s |
 | CLS | ≤ 0.1 |
 
-Mermaid 目前全站同步加载，是主要优化点。迁移时应改为组件级或可见后加载。
+Mermaid 目前全站同步加载，是主要优化点。迁移时改为构建期渲染为内联 SVG，页面运行时不加载 Mermaid 库。
 
 ## 回滚条件
 
@@ -131,7 +139,7 @@ Mermaid 目前全站同步加载，是主要优化点。迁移时应改为组件
 5. 运行本地构建和预览。
 6. 执行桌面、移动、链接、Mermaid、表格和搜索验收。
 7. 提交并行原型，推送并等待 Actions 成功。
-8. 人工确认原型 URL 后切换 workflow。
+8. 自动切换 workflow 构建目录并推送部署。
 9. 验证新路由内容正确。
 10. 更新产品设计、总进度表、TOC 和部署协议。
 

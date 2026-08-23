@@ -113,15 +113,15 @@ F01 覆盖三家框架的全部 9 篇页面（overview / run-lifecycle / tools �
 
 | ID | 任务 | 状态 | 验收标准 | 最近更新 |
 | --- | --- | --- | --- | --- |
-| S01 | Astro Starlight / Docusaurus 选型 | `未开始` | 按多语言路由、搜索、维护成本和 Actions 支持打分。 | 2026-08-22 |
+| S01 | Astro Starlight / Docusaurus 选型 | `已完成` | B-002 文档确认 Astro Starlight 为首选方案；维护者 2026-08-24 确认激活。 | 2026-08-24 |
 | S02 | 初始化最小站点工程 | `已完成` | Node 构建器读取 `tutorial/`，本地构建生成 6 个页面。 | 2026-08-22 |
 | S03 | GitHub Actions 构建 | `已完成` | Pages workflow 已配置构建、链接检查和 artifact 上传；远端历史已有部署记录。 | 2026-08-22 |
 | S04 | GitHub Pages 部署 | `进行中` | Workflow 对最新提交执行成功；继续按每次推送验证。 | 2026-08-22 |
 | S05 | 部署后页面检查 | `进行中` | 入口和总览可访问；`/zh-CN/` 语言索引仍返回 HTTP 404，需在站点改造中修复。 | 2026-08-22 |
 | S06 | 自定义域名（可选） | `未开始` | 如启用，需验证 HTTPS 和回退行为。 | 2026-08-22 |
-| S10 | Starlight 并行原型（B-002 Phase 1） | `未开始` | 新建 `site-starlight/`，配置中文 locale、sidebar（autogenerate 按目录分组）、GitHub Pages base path；验证 Mermaid、表格、链接和 Front Matter 兼容性。 | 2026-08-24 |
-| S11 | 迁移验收（B-002 Phase 2） | `未开始` | Pagefind 中文搜索、导航、深色模式、移动端响应式和 Lighthouse 性能预算全部达标。 | 2026-08-24 |
-| S12 | 替换发布（B-002 Phase 3） | `未开始` | 切换 workflow 构建目录到 Starlight 产物；不维护旧路由重定向；稳定后移除旧构建器。 | 2026-08-24 |
+| S10 | Starlight 并行原型（B-002 Phase 1） | `进行中` | 新建 `site-starlight/`，symlink 接入 `tutorial/` 内容；配置中文 locale、sidebar（`autogenerate.directory: 'zh-CN'`）、GitHub Pages base path 和 Mermaid 构建期 SVG 渲染插件；验证兼容性。 | 2026-08-24 |
+| S11 | 迁移验收（B-002 Phase 2） | `未开始` | Mermaid 全部渲染为内联 SVG；Pagefind 中文搜索可用；导航、深色模式、移动端响应式和 Lighthouse 性能预算全部达标；链接检查通过。 | 2026-08-24 |
+| S12 | 替换发布（B-002 Phase 3） | `未开始` | 自动切换 workflow 构建目录到 Starlight 产物并推送部署；不维护旧路由重定向；稳定后移除旧构建器。 | 2026-08-24 |
 
 ## 当前优先级队列
 
