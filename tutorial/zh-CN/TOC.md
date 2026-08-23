@@ -128,7 +128,7 @@ flowchart LR
 | --- | --- | --- | --- | --- |
 | Q-01 | [概念与架构题](./07-interview/concepts.md) | `07-interview/concepts.md` | 第一、二章 | 🟡 已按 v0.3 新建并通过 Polish / Implementation 自检；Implementation Review 待批量终审 |
 | Q-02 | [实现与调试题](./07-interview/implementation.md) | `07-interview/implementation.md` | 第二、三章 | 🟡 已按 v0.3 新建并通过 Polish / Implementation 自检；Implementation Review 待批量终审 |
-| Q-03 | 安全与系统设计题 | `07-interview/security-design.md` | 第二、四章 | ⬜ 未开始 |
+| Q-03 | [安全与系统设计题](./07-interview/security-design.md) | `07-interview/security-design.md` | 第二、四章 | 🟡 已按 v0.3 新建并通过 Polish / Implementation 自检；Implementation Review 待批量终审 |
 
 ## 第八章：评测
 
