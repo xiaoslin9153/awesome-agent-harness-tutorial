@@ -78,4 +78,8 @@ status: 已完成
 
 ## 部署检查
 
-- 待提交后填写 Actions run、站点入口和受影响页面结果。
+- 章节重写提交：`e228805`（仅含锚点修正，主体因 /tmp 写入被覆盖未包含）。
+- 修复提交：`c486826 docs: fix pi run lifecycle rewrite` 补齐完整 v0.3 内容（229 insertions）。
+- GitHub Actions：run `32617237785`（Deploy Pages，fix 提交）为 `completed success`。
+- 站点入口 `https://xiaoslin9153.github.io/awesome-agent-harness-tutorial/` 返回 HTTP 200。
+- 受影响页面 `/zh-CN/03-frameworks/pi/run-lifecycle/` 可访问并包含 v0.3 内容：双层循环、粘性终态、willRetry、message_end 驱动持久化。
