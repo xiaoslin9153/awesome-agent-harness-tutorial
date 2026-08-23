@@ -1,3 +1,13 @@
 ---
-return Astro.redirect('/zh-cn/00-overview/');
+const target = "/awesome-agent-harness-tutorial/zh-cn/00-overview/";
 ---
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="refresh" content={`0;url=${target}`}>
+  <link rel="canonical" href={`https://xiaoslin9153.github.io${target}`}>
+</head>
+<body>
+  <a href={target}>进入中文教程</a>
+</body>
+</html>
