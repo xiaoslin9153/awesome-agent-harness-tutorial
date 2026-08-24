@@ -100,6 +100,33 @@
 
 B-002 Phase 1 / Phase 2 / Phase 3 全部完成。
 
+## 排版修复（追加）
+
+**问题**：页面标题和 H2 字号过大（H2 约 29px），内容区偏窄（48rem），对中文阅读体验不佳。
+
+**修复**：覆盖 Starlight CSS 变量，在 `src/styles/custom.css` 中设置：
+
+| 变量 | 原值 | 新值 |
+| --- | --- | --- |
+| `--sl-text-h1` | `--sl-text-4xl`（35px） | `--sl-text-3xl`（29px） |
+| `--sl-text-h2` | `--sl-text-3xl`（29px） | `--sl-text-2xl`（24px） |
+| `--sl-text-h3` | `--sl-text-2xl`（24px） | `--sl-text-xl`（20px） |
+| `--sl-text-h4` | `--sl-text-xl`（20px） | `--sl-text-lg`（18px） |
+| `--sl-content-width` | `48rem` | `52rem` |
+
+## 基础设施检查结果
+
+以下配置确认无需更新：
+
+| 项目 | 状态 |
+| --- | --- |
+| `.github/workflows/deploy-pages.yml` | ✅ 正确指向 `site-starlight/dist` |
+| `site-starlight/src/content/docs` symlink | ✅ 已提交到 git，CI 可用 |
+| `content.config.ts` glob loader | ✅ 标准路径 `./src/content/docs` |
+| `astro.config.mjs` sidebar autogenerate | ✅ 按目录分组正确 |
+| Mermaid 客户端脚本 | ✅ 通过 MarkdownContent 覆盖注入 |
+| 根路径 redirect | ✅ 指向 `/00-overview/` |
+
 ## Sidebar 修复（追加）
 
 **问题**：初始部署后侧边栏"中文教程"分组下为空，无任何章节链接。
