@@ -34,11 +34,13 @@ export default defineConfig({
         },
       ],
       customCss: ["./src/styles/custom.css"],
+      expressiveCode: false,
     }),
   ],
   markdown: {
+    syntaxHighlight: false,
     processor: unified({
-      rehypePlugins: [rehypeMermaid()],
+      rehypePlugins: [() => rehypeMermaid()],
     }),
   },
 });
