@@ -93,9 +93,28 @@
 
 | 项目 | 结果 |
 | --- | --- |
-| GitHub Actions 部署 | ✅ commit aa5ccb5 成功（49s） |
+| GitHub Actions 部署 | ✅ commit 3f16509 成功（41s） |
 | Mermaid 脚本加载 | ✅ 页面 HTML 包含 CustomMarkdownContent 脚本引用 |
 | 根路径 redirect | ✅ 跳转到 `/zh-cn/00-overview/` |
 | 教程页面可访问 | ✅ HTTP 200 |
 
+B-002 Phase 1 / Phase 2 / Phase 3 全部完成。
+
+## Sidebar 修复（追加）
+
+**问题**：初始部署后侧边栏"中文教程"分组下为空，无任何章节链接。
+
+**根因**：
+1. `autogenerate: { directory: "tutorial/zh-CN" }` 路径错误——Starlight 的 autogenerate 是相对 content collection 根目录，不是相对文件系统。使用 root locale 时应直接用目录名。
+2. glob loader 从外部 `../../tutorial/` 加载内容时，Starlight 内部的 `getRoutePathRelativeToCollectionRoot()` 假设内容在 `src/content/docs/` 下，导致路径匹配失败。
+3. symlink `src/content/docs -> ../../tutorial/zh-CN` 未提交到 git，CI 上构建时找不到内容目录。
+
+**修复**：
+1. 创建 symlink：`src/content/docs -> ../../../tutorial/zh-CN`（相对路径指向仓库根的 `tutorial/zh-CN/`）。
+2. `content.config.ts` 改用标准路径：`glob({ pattern: "**/*.md", base: "./src/content/docs" })`。
+3. sidebar 改为按顶层子目录显式配置 autogenerate 分组（概览、核心概念、Harness 机制等），每个分组内自动展开该目录下的文件和子目录。
+4. 提交 symlink 到 git 使 CI 构建可用。
+5. 更新根路径 redirect 为 `/awesome-agent-harness-tutorial/00-overview/`（无 locale 前缀）。
+
+B-002 Phase 1 / Phase 2 / Phase 3 全部完成。
 B-002 Phase 1 / Phase 2 / Phase 3 全部完成。
