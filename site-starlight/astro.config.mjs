@@ -50,36 +50,17 @@ export default defineConfig({
         {
           label: "实验",
           collapsed: true,
-          items: [
-            { autogenerate: { directory: "03-labs" } },
-            { autogenerate: { directory: "05-labs" } },
-          ],
-        },
-        {
-          label: "框架基础",
-          collapsed: true,
-          items: [{ autogenerate: { directory: "04-framework-foundations" } }],
-        },
-        {
-          label: "框架进阶",
-          collapsed: true,
-          items: [{ autogenerate: { directory: "05-framework-advanced" } }],
+          items: [{ autogenerate: { directory: "05-labs" } }],
         },
         {
           label: "对比",
           collapsed: true,
-          items: [
-            { autogenerate: { directory: "04-comparisons" } },
-            { autogenerate: { directory: "06-comparisons" } },
-          ],
+          items: [{ autogenerate: { directory: "04-comparisons" } }],
         },
         {
           label: "案例分析",
           collapsed: true,
-          items: [
-            { autogenerate: { directory: "06-case-studies" } },
-            { autogenerate: { directory: "07-case-studies" } },
-          ],
+          items: [{ autogenerate: { directory: "06-case-studies" } }],
         },
         {
           label: "面试准备",
