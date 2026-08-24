@@ -1,0 +1,50 @@
+---
+---
+
+<div class="sl-markdown-content"><slot /></div>
+
+<script>
+  import mermaid from "mermaid";
+
+  function initMermaid() {
+    const isDark =
+      document.documentElement.dataset.theme === "dark" ||
+      (document.documentElement.dataset.theme !== "light" &&
+        window.matchMedia("(prefers-color-scheme: dark)").matches);
+
+    mermaid.initialize({
+      startOnLoad: false,
+      theme: isDark ? "dark" : "default",
+      securityLevel: "strict",
+      fontFamily: "inherit",
+    });
+
+    const blocks = document.querySelectorAll(
+      'pre[data-language="mermaid"] > code',
+    );
+    if (blocks.length === 0) return;
+
+    let index = 0;
+    for (const code of blocks) {
+      const source = code.textContent || "";
+      const pre = code.parentElement;
+      if (!pre) continue;
+
+      const id = `mermaid-svg-${index++}`;
+      const figure = document.createElement("figure");
+      figure.className = "mermaid-figure";
+      pre.replaceWith(figure);
+
+      mermaid
+        .render(id, source)
+        .then(({ svg }) => {
+          figure.innerHTML = svg;
+        })
+        .catch(() => {
+          figure.innerHTML = `<pre>${source}</pre>`;
+        });
+    }
+  }
+
+  document.addEventListener("DOMContentLoaded", initMermaid);
+</script>

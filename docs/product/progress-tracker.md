@@ -119,9 +119,9 @@ F01 覆盖三家框架的全部 9 篇页面（overview / run-lifecycle / tools �
 | S04 | GitHub Pages 部署 | `进行中` | Workflow 对最新提交执行成功；继续按每次推送验证。 | 2026-08-22 |
 | S05 | 部署后页面检查 | `进行中` | 入口和总览可访问；`/zh-CN/` 语言索引仍返回 HTTP 404，需在站点改造中修复。 | 2026-08-22 |
 | S06 | 自定义域名（可选） | `未开始` | 如启用，需验证 HTTPS 和回退行为。 | 2026-08-22 |
-| S10 | Starlight 并行原型（B-002 Phase 1） | `进行中` | 新建 `site-starlight/`，symlink 接入 `tutorial/` 内容；配置中文 locale、sidebar（`autogenerate.directory: 'zh-CN'`）、GitHub Pages base path 和 Mermaid 构建期 SVG 渲染插件；验证兼容性。 | 2026-08-24 |
-| S11 | 迁移验收（B-002 Phase 2） | `未开始` | Mermaid 全部渲染为内联 SVG；Pagefind 中文搜索可用；导航、深色模式、移动端响应式和 Lighthouse 性能预算全部达标；链接检查通过。 | 2026-08-24 |
-| S12 | 替换发布（B-002 Phase 3） | `未开始` | 自动切换 workflow 构建目录到 Starlight 产物并推送部署；不维护旧路由重定向；稳定后移除旧构建器。 | 2026-08-24 |
+| S10 | Starlight 并行原型（B-002 Phase 1） | `已完成` | 新建 `site-starlight/`，glob 接入 `tutorial/` 内容；配置中文 locale、sidebar（`autogenerate.directory: 'zh-CN'`）、GitHub Pages base path；50 页构建成功，链接检查通过。Mermaid 构建期插件在 Astro 7 Sätteri 处理器下不生效，改用客户端渲染方案。 | 2026-08-24 |
+| S11 | 迁移验收（B-002 Phase 2） | `进行中` | Mermaid 客户端脚本已注入全部页面（CustomMarkdownContent 组件覆盖）；构建和链接检查通过。待推送后验证线上 Mermaid SVG 渲染、Pagefind 中文搜索、导航和深色模式。 | 2026-08-24 |
+| S12 | 替换发布（B-002 Phase 3） | `进行中` | workflow 已切换到 `site-starlight/` 构建并部署；根路径 redirect 已配置。待线上验证通过后标记完成。 | 2026-08-24 |
 
 ## 当前优先级队列
 
