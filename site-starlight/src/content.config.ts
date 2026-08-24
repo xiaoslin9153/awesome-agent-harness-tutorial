@@ -5,8 +5,8 @@ import { z } from "astro/zod";
 
 const docs = defineCollection({
   loader: glob({
-    pattern: "zh-CN/**/*.md",
-    base: new URL("../../tutorial/", import.meta.url).pathname,
+    pattern: "**/*.md",
+    base: "./src/content/docs",
   }),
   schema: docsSchema({
     extend: () =>

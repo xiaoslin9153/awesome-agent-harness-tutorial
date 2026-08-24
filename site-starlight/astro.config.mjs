@@ -27,8 +27,74 @@ export default defineConfig({
       ],
       sidebar: [
         {
-          label: "中文教程",
-          items: [{ autogenerate: { directory: "tutorial/zh-CN" } }],
+          label: "概览",
+          items: [{ autogenerate: { directory: "00-overview" } }],
+        },
+        {
+          label: "核心概念",
+          collapsed: true,
+          items: [{ autogenerate: { directory: "01-core-concepts" } }],
+        },
+        {
+          label: "Harness 机制",
+          collapsed: true,
+          items: [{ autogenerate: { directory: "02-harness-mechanics" } }],
+        },
+        {
+          label: "框架拆解",
+          collapsed: true,
+          items: [
+            { autogenerate: { directory: "03-frameworks" } },
+          ],
+        },
+        {
+          label: "实验",
+          collapsed: true,
+          items: [
+            { autogenerate: { directory: "03-labs" } },
+            { autogenerate: { directory: "05-labs" } },
+          ],
+        },
+        {
+          label: "框架基础",
+          collapsed: true,
+          items: [{ autogenerate: { directory: "04-framework-foundations" } }],
+        },
+        {
+          label: "框架进阶",
+          collapsed: true,
+          items: [{ autogenerate: { directory: "05-framework-advanced" } }],
+        },
+        {
+          label: "对比",
+          collapsed: true,
+          items: [
+            { autogenerate: { directory: "04-comparisons" } },
+            { autogenerate: { directory: "06-comparisons" } },
+          ],
+        },
+        {
+          label: "案例分析",
+          collapsed: true,
+          items: [
+            { autogenerate: { directory: "06-case-studies" } },
+            { autogenerate: { directory: "07-case-studies" } },
+          ],
+        },
+        {
+          label: "面试准备",
+          collapsed: true,
+          items: [{ autogenerate: { directory: "07-interview" } }],
+        },
+        {
+          label: "评估",
+          collapsed: true,
+          items: [{ autogenerate: { directory: "08-evaluation" } }],
+        },
+        {
+          label: "术语表",
+          collapsed: true,
+          items: [{ autogenerate: { directory: "09-glossary" } }],
         },
       ],
       customCss: ["./src/styles/custom.css"],
