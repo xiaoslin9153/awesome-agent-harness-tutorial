@@ -25,7 +25,6 @@ review:
     summary: 已核对 Reasonix Session / CAS 保存 / LoadSession 修复、DeepSeek Harness SessionHeader / 事件溯源 / surface 投影、Pi 树状 JSONL / appendMessage / entry_added 源码锚点。
 ---
 
-# Session、Turn 与状态模型
 
 ## 上一章遗留问题
 

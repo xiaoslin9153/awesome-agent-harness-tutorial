@@ -24,7 +24,6 @@ review:
     summary: 已执行 `npm start` 与 `npm test`，核对源码行号、事件计数和三条测试路径；框架对照只引用 C-02 已验证结论。
 ---
 
-# 最小 Agent Run 实验
 
 ## 一句话结论
 

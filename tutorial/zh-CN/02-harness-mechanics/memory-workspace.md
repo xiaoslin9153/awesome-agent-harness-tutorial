@@ -24,7 +24,6 @@ review:
     summary: 已核对 Reasonix memory store/remember/forget/revisions、workspace mutation event、Pi custom entry 与 compaction entry 的固定快照路径。
 ---
 
-# Memory 与工作区
 
 ## 一句话结论
 

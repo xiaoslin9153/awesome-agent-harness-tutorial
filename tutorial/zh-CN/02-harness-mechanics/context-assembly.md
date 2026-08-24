@@ -24,7 +24,6 @@ review:
     summary: 已核对 Reasonix Prepare/buildRequest、DeepSeek Harness surface/header/assembly 和 Pi system prompt/context files/next-turn override 的固定快照路径。
 ---
 
-# Context 组装与分层
 
 ## 一句话结论
 

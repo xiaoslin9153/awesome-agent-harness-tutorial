@@ -24,7 +24,6 @@ review:
     summary: 已核对 Reasonix Spec/WritableRootSet/fail closed、DeepSeek Harness SandboxProvider/local profiles/denial rules、Pi bash env/process controls 的固定快照路径。
 ---
 
-# Sandbox 与权限
 
 ## 一句话结论
 

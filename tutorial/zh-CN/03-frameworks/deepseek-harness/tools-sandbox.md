@@ -24,7 +24,6 @@ review:
     summary: 已核对 createExecution/executionMode/serviceAsk/guard、LocalSandboxProvider confine/probeRunner 与 profiles 的固定快照路径。
 ---
 
-# DeepSeek Harness 工具与沙箱
 
 ## 一句话结论
 

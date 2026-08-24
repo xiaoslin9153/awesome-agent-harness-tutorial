@@ -24,7 +24,6 @@ review:
     summary: 已核对 Reasonix frozen sampling retry、DeepSeek Harness agent/request-error waterfall、Pi auto retry/exponential backoff 的固定快照路径。
 ---
 
-# Retry 与幂等
 
 ## 一句话结论
 

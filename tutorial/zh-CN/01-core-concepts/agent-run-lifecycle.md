@@ -25,7 +25,6 @@ review:
     summary: 已核对 Reasonix Run / 工具循环 / 取消、DeepSeek Harness turn-step 生命周期与终止原因、Pi activeRun / 事件持久化源码锚点。
 ---
 
-# 一次 Agent Run 的完整生命周期
 
 ## 上一章遗留问题
 

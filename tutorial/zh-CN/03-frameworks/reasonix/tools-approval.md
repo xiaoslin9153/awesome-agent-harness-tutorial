@@ -24,7 +24,6 @@ review:
     summary: 已核对 permission Policy.Decide/DecideSubject、executeOne resolveToolPolicy 序列、sandbox EscapeApprover 的固定快照路径。
 ---
 
-# Reasonix 工具与审批
 
 ## 一句话结论
 

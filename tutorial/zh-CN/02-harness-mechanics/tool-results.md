@@ -24,7 +24,6 @@ review:
     summary: 已核对 Reasonix truncateToolOutputFor/RawContent/SnipHint/ModelTextObservation、DeepSeek Harness output validation/materialize/finalizeContent、Pi OutputAccumulator/bash footer/truncate metadata 的固定快照路径。
 ---
 
-# Tool 结果处理与截断
 
 ## 一句话结论
 

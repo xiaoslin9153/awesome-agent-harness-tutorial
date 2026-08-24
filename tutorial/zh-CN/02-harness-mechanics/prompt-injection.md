@@ -24,7 +24,6 @@ review:
     summary: 已核对 Reasonix ClassifierTaskText/SubagentHostDecisionBoundary/bash readonly/danger patterns、DeepSeek Harness monotonic guard、Pi beforeToolCall validation boundary 的固定快照路径。
 ---
 
-# Prompt Injection 与工具安全
 
 ## 一句话结论
 

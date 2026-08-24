@@ -24,7 +24,6 @@ review:
     summary: 已执行 npm start/npm test，核对逐条 token 成本、选中与丢弃 ID、自定义三消息案例和 pinned 溢出异常；框架对照引用 M-02 已验证锚点。
 ---
 
-# Context 膨胀实验
 
 ## 一句话结论
 

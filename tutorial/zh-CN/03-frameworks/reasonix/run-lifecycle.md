@@ -24,7 +24,6 @@ review:
     summary: 已核对固定快照 aa82b2f 的 Controller 编排、Run 初始化、采样冻结重试、最终检查、工具批处理、取消保存和暂停类型。
 ---
 
-# Reasonix Run 生命周期
 
 ## 一句话结论
 

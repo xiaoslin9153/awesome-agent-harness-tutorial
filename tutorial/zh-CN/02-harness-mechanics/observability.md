@@ -24,7 +24,6 @@ review:
     summary: 已核对 Reasonix ContextMaintenanceReceipt、DeepSeek Harness sourceEventSeqs、Pi HARNESS_TELEMETRY_SCHEMA/AI_TELEMETRY_SCHEMA 与 secret-free 原则的固定快照路径。
 ---
 
-# Observability 与 Replay
 
 ## 一句话结论
 

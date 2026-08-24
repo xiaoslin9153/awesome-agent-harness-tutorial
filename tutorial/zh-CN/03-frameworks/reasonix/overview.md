@@ -24,7 +24,6 @@ review:
     summary: 已核对 boot.BuildResult/Build/BuildRuntime、Controller 字段群、Agent 结构与 Provider 接口的固定快照路径。
 ---
 
-# Reasonix 架构总览
 
 ## 一句话结论
 

@@ -24,7 +24,6 @@ review:
     summary: 已核对 setPhase/wakeDriver/send abort 重定向、turn() 粘性终态与 turn/end finally、step() chunk/message 提交的固定快照路径。
 ---
 
-# DeepSeek Harness Run 生命周期
 
 ## 一句话结论
 

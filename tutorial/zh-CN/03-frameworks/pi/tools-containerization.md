@@ -24,7 +24,6 @@ review:
     summary: 已核对 write/edit 的 withFileMutationQueue 与 throwIfAborted、file-mutation-queue realpath keying、bash killProcessTree 的固定快照路径。
 ---
 
-# Pi 工具与容器化
 
 ## 一句话结论
 

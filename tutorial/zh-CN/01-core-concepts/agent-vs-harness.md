@@ -25,7 +25,6 @@ review:
     summary: 已核对三家装配入口、Agent 类型、Run 驱动和工具钩子的源码锚点；理论模型未冒充框架事实。
 ---
 
-# Agent、Harness 与 Runtime 的边界
 
 ## 上一章遗留问题
 

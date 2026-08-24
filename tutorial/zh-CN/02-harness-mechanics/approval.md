@@ -24,7 +24,6 @@ review:
     summary: 已核对 Reasonix approvalManager/requestApproval、DeepSeek Harness serviceAsk/pre-execute/guard、Pi beforeToolCall/ToolCallEvent block 的固定快照路径。
 ---
 
-# 审批模型
 
 ## 一句话结论
 

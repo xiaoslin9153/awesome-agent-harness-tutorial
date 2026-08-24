@@ -24,7 +24,6 @@ review:
     summary: 已核对 Reasonix event log 安全预算/append-replace、DeepSeek Harness SESSION_FORMAT_VERSION/SessionEvent、Pi CURRENT_SESSION_VERSION/migration/tree 的固定快照路径。
 ---
 
-# Persistence
 
 ## 一句话结论
 

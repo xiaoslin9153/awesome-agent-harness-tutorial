@@ -24,7 +24,6 @@ review:
     summary: 已核对 Reasonix Save/CAS/recovery、DeepSeek Harness resume/persistence seed/end-seed、Pi setSessionFile/resume runtime 的固定快照路径。
 ---
 
-# Checkpoint 与 Resume
 
 ## 一句话结论
 

@@ -24,7 +24,6 @@ review:
     summary: 已核对 AgentFactory/AgentRegistry、AgentLoop inject/config、AgentOptions/AgentStatus/Agent 接口与 SessionHeader 持久字段的固定快照路径。
 ---
 
-# DeepSeek Harness 架构总览
 
 ## 一句话结论
 

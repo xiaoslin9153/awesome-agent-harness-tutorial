@@ -24,7 +24,6 @@ review:
     summary: 已执行 npm start/npm test，核对完整 JSON、三条测试断言、unknown-state 的即时升级语义和无键未知路径；框架对照引用 M-08 已验证锚点。
 ---
 
-# Tool 重试副作用实验
 
 ## 一句话结论
 

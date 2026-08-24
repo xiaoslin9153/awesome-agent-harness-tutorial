@@ -24,7 +24,6 @@ review:
     summary: 已核对 Reasonix prune/summary projection、DeepSeek Harness surface replacement/transaction 和 Pi cut point/structured summary/truncation 的固定快照实现。
 ---
 
-# Context 压缩与截断
 
 ## 一句话结论
 

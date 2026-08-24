@@ -8,7 +8,6 @@ translations:
   en: null
 ---
 
-# Agent Harness 学习指南
 
 本教程面向想理解 Agent Harness 内部机制的工程师。它不把 Agent 当作黑盒，而是拆开看一次任务如何从用户输入变成模型请求、工具调用、审批、持久化、流式输出和最终结果。
 

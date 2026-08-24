@@ -24,7 +24,6 @@ review:
     summary: 已核对 Reasonix executeOne/confineWrite/scheduler/ShellExecution、DeepSeek Harness pre/guard/execute/post 管线、Pi file queue/bash process tree/afterToolCall 的固定快照路径。
 ---
 
-# Tool 执行与副作用
 
 ## 一句话结论
 

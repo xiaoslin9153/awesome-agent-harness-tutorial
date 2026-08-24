@@ -24,7 +24,6 @@ review:
     summary: 已执行 npm start/npm test，核对四条主路径、完整审计序列、重复 ID 异常和 blocked effect；框架对照引用 M-06 已验证锚点。
 ---
 
-# 审批拒绝恢复实验
 
 ## 一句话结论
 

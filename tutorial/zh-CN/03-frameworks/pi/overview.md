@@ -24,7 +24,6 @@ review:
     summary: 已核对 AgentSession、SessionManager、AgentHarness 与 ExecutionEnv 类定义和构造契约的固定快照路径。
 ---
 
-# Pi 架构总览
 
 ## 一句话结论
 

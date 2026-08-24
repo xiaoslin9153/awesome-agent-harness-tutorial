@@ -24,7 +24,6 @@ review:
     summary: 已核对 Reasonix Controller.Cancel/stripCancelledVisibleTurnMessagesAfterWithFallback、DeepSeek Harness callerCancelled/bodyInvoked/quiescence、Pi killProcessTree/abortRetry 的固定快照路径。
 ---
 
-# Timeout 与取消
 
 ## 一句话结论
 

@@ -24,7 +24,6 @@ review:
     summary: 已核对 Reasonix Registry/read_file、DeepSeek Harness ToolDefinition/JSON Schema registry、Pi AgentTool/TypeBox validation 与 beforeToolCall 的固定快照路径。
 ---
 
-# Tool Schema 与调用协议
 
 ## 一句话结论
 

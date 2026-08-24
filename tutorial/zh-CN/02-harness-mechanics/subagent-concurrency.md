@@ -24,7 +24,6 @@ review:
     summary: 已核对 Reasonix SubagentScheduler/whole-workspace conflict、DeepSeek Harness subagent domain contract、Pi file mutation queue 与 batch early termination 的固定快照路径。
 ---
 
-# Subagent 与并发
 
 ## 一句话结论
 

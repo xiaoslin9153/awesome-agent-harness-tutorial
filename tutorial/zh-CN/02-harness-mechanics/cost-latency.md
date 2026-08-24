@@ -24,7 +24,6 @@ review:
     summary: 已核对 Reasonix runBudget/observeRunBudget/emitTurnUsage、DeepSeek Harness UsageRow append-only ledger、Pi AI telemetry usage/TTFT schema 的固定快照路径。
 ---
 
-# Cost 与延迟
 
 ## 一句话结论
 

@@ -24,7 +24,6 @@ review:
     summary: 已核对 runAgentLoop/runLoop、streamAssistantResponse 分支、executeToolCalls 终止规则与 AgentSession processEvents 桥接的固定快照路径。
 ---
 
-# Pi Run 生命周期
 
 ## 一句话结论
 

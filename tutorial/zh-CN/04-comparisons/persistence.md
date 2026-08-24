@@ -24,7 +24,6 @@ review:
     summary: 已核对 M-10/M-11 中三家固定快照路径与本章对照表一致，并复核 Reasonix CAS 与 WAL、DeepSeek 版本策略与 resume barrier、Pi 迁移与 JSONL 树。
 ---
 
-# 持久化与恢复对比
 
 ## 一句话结论
 
