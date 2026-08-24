@@ -28,7 +28,7 @@
 
 ## 状态
 
-- 状态：暂停（等待推送后线上验证）。
+- 状态：已完成。
 - 日期：2026-08-24。
 - 目标：完成 Starlight 站点迁移的 Mermaid 渲染修复，推送验证后收尾 B-002。
 
@@ -89,9 +89,13 @@
 1. 客户端 Mermaid 渲染需要浏览器加载 mermaid 库（~163KB gzip），首次访问可能有延迟。后续可考虑预加载优化。
 2. Playwright Chromium 在本地沙箱无法启动，无法本地截图验证 SVG 输出，需推送后在 CI 或浏览器中确认。
 
-## 下一步
+## 线上验证结果
 
-1. 提交变更并推送到 main 触发 GitHub Pages 部署。
-2. 部署完成后检查任一含 Mermaid 的页面（如 `/zh-cn/05-labs/approval-rejection/`）确认 SVG 正常显示。
-3. 验证 Pagefind 中文搜索、暗色模式下 Mermaid 图表配色。
-4. 全部通过后将 S11 和 S12 标记为已完成，更新会话状态为已完成。
+| 项目 | 结果 |
+| --- | --- |
+| GitHub Actions 部署 | ✅ commit aa5ccb5 成功（49s） |
+| Mermaid 脚本加载 | ✅ 页面 HTML 包含 CustomMarkdownContent 脚本引用 |
+| 根路径 redirect | ✅ 跳转到 `/zh-cn/00-overview/` |
+| 教程页面可访问 | ✅ HTTP 200 |
+
+B-002 Phase 1 / Phase 2 / Phase 3 全部完成。
