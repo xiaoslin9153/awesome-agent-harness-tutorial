@@ -1,6 +1,7 @@
 import { defineConfig } from "astro/config";
 import starlight from "@astrojs/starlight";
 import rehypeMermaid from "@beoe/rehype-mermaid";
+import { unified } from "@astrojs/markdown-remark";
 
 const siteUrl = process.env.SITE_BASE_URL || "/awesome-agent-harness-tutorial/";
 
@@ -36,6 +37,8 @@ export default defineConfig({
     }),
   ],
   markdown: {
-    rehypePlugins: [rehypeMermaid()],
+    processor: unified({
+      rehypePlugins: [rehypeMermaid()],
+    }),
   },
 });
