@@ -122,6 +122,7 @@ F01 覆盖三家框架的全部 9 篇页面（overview / run-lifecycle / tools �
 | S10 | Starlight 并行原型（B-002 Phase 1） | `已完成` | 新建 `site-starlight/`，glob 接入 `tutorial/` 内容；配置中文 locale、sidebar（`autogenerate.directory: 'zh-CN'`）、GitHub Pages base path；50 页构建成功，链接检查通过。Mermaid 构建期插件在 Astro 7 Sätteri 处理器下不生效，改用客户端渲染方案。 | 2026-08-24 |
 | S11 | 迁移验收（B-002 Phase 2） | `已完成` | Mermaid 客户端脚本注入成功，线上页面确认脚本加载；50 页构建、链接检查、Pagefind 索引全部通过；根路径 redirect 正常跳转到中文教程首页。 | 2026-08-24 |
 | S12 | 替换发布（B-002 Phase 3） | `已完成` | workflow 已切换到 `site-starlight/` 构建并部署成功（commit aa5ccb5）；根路径 redirect 验证通过；不维护旧路由重定向。 | 2026-08-24 |
+| S13 | 中文排版精修与正文 aside 改造 | `进行中` | CSS 排版精修已部署（中文字体栈、标题层级、行高间距）；正文 aside 改造完成 20/48 篇（P0 核心概念 4 篇 + P1 机制 16 篇）。剩余：P2 框架 9 篇、P2 对比实验 10 篇、P3 案例/面试/评估 7 篇、根目录 2 篇。 | 2026-08-25 |
 
 ## 当前优先级队列
 

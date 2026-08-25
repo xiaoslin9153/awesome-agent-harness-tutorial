@@ -127,6 +127,42 @@ B-002 Phase 1 / Phase 2 / Phase 3 全部完成。
 | Mermaid 客户端脚本 | ✅ 通过 MarkdownContent 覆盖注入 |
 | 根路径 redirect | ✅ 指向 `/00-overview/` |
 
+## 正文排版改造进度（2026-08-25 暂停记录）
+
+**目标**：48 篇正文全部添加 Starlight aside（`:::note` / `:::tip` / `:::caution` / `:::danger`），提升可读性和视觉层次。
+
+**改造标准**：
+1. 每篇至少 3 个 aside（note/tip/caution/danger 按语义选择）
+2. 关键结论用 aside 包裹，不再埋在长段落里
+3. 枚举超过 3 项改用列表
+4. 长路径/多文件引用改用代码块
+
+**已完成（20/48 篇）**：
+
+| 批次 | 篇数 | aside 数 | 状态 |
+| --- | --- | --- | --- |
+| P0 `01-core-concepts/` | 4 | 30 | ✅ 已推送（commit ece1dee） |
+| P1 `02-harness-mechanics/` | 16 | 102 | ✅ 已推送（commit 23dab65） |
+
+**待做（28 篇）**：
+
+| 批次 | 篇数 | 目录 |
+| --- | --- | --- |
+| P2 框架拆解 | 9 | `03-frameworks/` |
+| P2 对比 | 6 | `04-comparisons/` |
+| P2 实验 | 4 | `05-labs/` |
+| P3 案例 | 2 | `06-case-studies/` |
+| P3 面试 | 3 | `07-interview/` |
+| P3 评估 | 1 | `08-evaluation/` |
+| P3 术语 | 1 | `09-glossary/` |
+| 根目录 | 2 | `00-overview.md` + `TOC.md` |
+
+**CSS 排版精修**：已部署（commit 87cb62a），包含中文字体栈、标题层级、行高、间距、H2 分隔线。
+
+**暂停原因**：维护者有新工作需要处理。
+
+**恢复时的第一步**：从 `03-frameworks/deepseek-harness/overview.md` 开始改造 P2 框架拆解 9 篇。
+
 ## Sidebar 修复（追加）
 
 **问题**：初始部署后侧边栏"中文教程"分组下为空，无任何章节链接。
