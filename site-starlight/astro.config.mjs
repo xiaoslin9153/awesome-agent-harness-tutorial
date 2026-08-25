@@ -77,6 +77,11 @@ export default defineConfig({
           collapsed: true,
           items: [{ autogenerate: { directory: "09-glossary" } }],
         },
+        {
+          label: "延伸阅读",
+          collapsed: true,
+          items: [{ autogenerate: { directory: "10-extended" } }],
+        },
       ],
       customCss: ["./src/styles/custom.css"],
       expressiveCode: false,
