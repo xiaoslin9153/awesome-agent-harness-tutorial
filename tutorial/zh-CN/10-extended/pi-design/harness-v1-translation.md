@@ -920,3 +920,545 @@ await search.searchSessions({ text: "auth", where: { cwd: "/repo" } });
 ## 2.9 精确重写
 
 条目和用量行从不删除（§1.2）。唯一被批准的例外是**精确重写**：一个管理性的仓库操作，将保留集合 — 条目、用量行、事实、Lane 寄存器 — 复制到一个一致快照之上的新鲜会话存储中，与 Fork 完全一样（§2.8），然后原子地将它替换旧存储。它的保留谓词可以表达任何运行时机制都不允许表达的：合规级擦除（包括被向前复制到 `retainedTail` 和摘要中的内容）、修剪废弃分支、重新生成遗留格式 id（附录 B）。它是 Harness 之上的工具 — 没有 Harness 表面暴露它，也没有核心规则依赖它。
+
+---
+
+# Part 3 — 操作状态机
+
+## 3.1 操作
+
+```ts
+interface Operation {
+  operationId: string;
+  lane: string;
+  sourceLeafId: string | null;
+  startedAt: number;
+  intent:
+    | { kind: "run"; promptEntryIds: string[];
+        systemPromptOverride?: string; resumeData?: Record<string, JsonValue> }
+    | { kind: "compaction"; customInstructions?: string }
+    | { kind: "navigation"; targetId: string | null; summarize: boolean;
+        label?: string; customInstructions?: string };
+}
+```
+
+接受数据保存在 `op.meta/{operationId}` 寄存器中：接受时写入一次，从不覆盖，由终态事务删除（§3.13）。`sourceLeafId` 是操作*之前*的 Lane 叶子；操作自身追加的条目在它之后。`promptEntryIds` 命名调用者规范化的 prompt 条目，在接受事务中出生即放置（§3.6）。
+
+## 3.2 操作状态 — 程序计数器
+
+`op.state/{operationId}` 直接保存一个完整 `OperationState`。每次转换覆盖整个寄存器；终态事务删除它（§3.13）。联合中没有 finished 成员 — 已结束的操作完全没有状态，其结果保存在 `lane.lastResult` 中。
+
+```ts
+type OperationState = RunState | CompactionState | NavigationState;
+
+type Control =
+  | { status: "running" }
+  | { status: "cancel_requested"; requestedAt: number;
+      /** 已排空的队列 id。它们的 pending.entry 寄存器在排空后
+          存活，只由终态事务删除 (§3.11, §3.13)。 */
+      drainedSteer: string[]; drainedFollowUp: string[] };
+
+interface RunState {
+  kind: "run";
+  control: Control;
+  /** 接受时原子捕获；设置器影响后续操作。 */
+  settings: {
+    compaction: CompactionSettings;
+    steeringMode: QueueMode;
+    followUpMode: QueueMode;
+    toolExecution: "sequential" | "parallel";
+  };
+  phase: RunPhase;
+  inbox: Inbox;
+  /** 此操作中最新持久助手生成/获取响应。 */
+  latestAssistantEntryId: string | null;
+}
+
+interface CheckpointPhase {
+  kind: "checkpoint";
+  continuation: Continuation;
+  /** 下一个生成步骤的持久关联源。 */
+  triggerEntryId: string;
+  /** 阈值压缩每个触发边界至多尝试一次。 */
+  thresholdCheckedTriggerEntryId?: string;
+  /** 一次一个排空后，在排空另一个排队输入之前先生成。 */
+  skipInboxOnce?: boolean;
+}
+
+type RunPhase =
+  | CheckpointPhase
+  | { kind: "assistant"; generation: Generation }
+  | { kind: "tools"; batch: ToolBatch }
+  | { kind: "compaction"; reason: "threshold" | "overflow";
+      structural: StructuralDecision; resumeAfter: CheckpointPhase }
+  | { kind: "deferred"; deferred: Deferred }
+  | { kind: "failure_drain"; error: OperationError; provenance:
+      | { kind: "response"; entryId: string }
+      | { kind: "structural"; taskId: string } };
+
+type Continuation =
+  | { kind: "need_assistant"; overflowRecoveryUsed: boolean }
+  | { kind: "may_finish"; includeFinalAssistant: boolean };
+
+interface Inbox {
+  /** 保留的条目 id。载荷 — 以及写入的条目类型和
+      customType — 保存在每个 id 的 pending.entry 寄存器中 (§1.3, §2.2)。 */
+  steer: string[];
+  followUp: string[];
+  writes: string[];
+}
+
+interface OperationError { code: string; message: string; details?: JsonValue }
+```
+
+一个队列项是一个条目 id；其他一切 — 载荷、写入类型、`customType` — 从其 `pending.entry` 寄存器解引用。
+
+`latestAssistantEntryId` 在与每个助手生成或延迟获取响应相同的结算事务中更新。它让完成和恢复无需分支扫描即可构建结果/事件。工具批次在工具工作保持活跃时保留其产生回合的 id。
+
+任何追加会话输入或工具结果且需要另一个助手的转换，写入一个 `need_assistant(false)` 的检查点，追加的条目作为 `triggerEntryId`。`may_finish` 检查点将 `triggerEntryId` 设置为引起边界的条目：`stop`/真正 `length` 结算的已结算响应（§3.7），全部终止的工具批次的最新结果条目（§3.8）— 所以阈值去重（§3.12）和恢复验证（§3.3）总是命名一个现有条目。未投影的自定义写入保留当前检查点，包括触发和溢出标志。进入阈值压缩首先将检查点复制到 `resumeAfter`，设置 `thresholdCheckedTriggerEntryId = triggerEntryId`；因此拒绝、空准备、成功和崩溃不能重新检查同一边界。
+
+### 生成
+
+```ts
+interface NormalizedRetryPolicy { maxAttempts: number; baseDelayMs: number }
+
+interface GenerationContext {
+  stepId: string;
+  triggerEntryId: string;
+  /** 步骤开始时 Lane 配置的内联快照。 */
+  configuration: LaneConfiguration;
+  streamOptions: AgentHarnessStreamOptions;
+  retryPolicy: NormalizedRetryPolicy;
+  /** 从产生检查点的 need_assistant continuation 复制，
+      使崩溃恢复后分类的结算仍知道溢出恢复是否已用掉 (§3.7, §3.9)。 */
+  overflowRecoveryUsed: boolean;
+}
+
+type Generation =
+  | { status: "ready"; context: GenerationContext; nextAttempt: number }
+  | { status: "effect_pending"; context: GenerationContext; attempt: number;
+      responseEntryId: string; usageId: string;
+      intendedOutputLimit: number; contextWindow: number }
+  | { status: "retry_wait"; context: GenerationContext; nextAttempt: number;
+      notBefore: number; errorMessage: string };
+```
+
+上下文**内联**快照配置、流选项和重试策略；`LaneConfiguration` 很小。因此恢复可以精确报告缺少什么而无需解析任何东西（§4.4）。对于每次尝试，`before_request` 钩子聚合在意图提交之前运行；`before_payload` 和 `after_response` 挂载在 provider 流上。意图保留响应条目 id 和用量行 id（§1.2 的 follower id）；结算写入在恰好这些 id 之下。有效参数以 `operationId` 加 `sourceIndex` 为键；大的有效参数在 `op.tool_args/{operationId}:{stepId}:{sourceIndex}` 寄存器中保存一次 — 产生生成的 `stepId` 消除跨回合批次的歧义 — 在放行时写入（§3.8）并通过该确定性键定位 — 状态不携带每次调用的参数引用。无条件持久化它们，因为 `prepareArguments` 而不仅是 `before_tool` 可能更改它们。并行调用可以一起处于 effect-pending；结果条目按源顺序提交。
+
+### 延迟
+
+```ts
+type Deferred =
+  | { status: "suspended"; stepId: string; sourceEntryId: string; poll: number;
+      configuration: LaneConfiguration; streamOptions: AgentHarnessStreamOptions }
+  | { status: "effect_pending"; stepId: string; sourceEntryId: string; poll: number;
+      responseEntryId: string; usageId: string;
+      configuration: LaneConfiguration; streamOptions: AgentHarnessStreamOptions };
+```
+
+一次 `resume()` 至多执行一次 `fetchDeferred(handle, { wait: 0 })`。Suspended 的 `poll` 是已完成的轮询数；新意图使用 `poll + 1`，该 1 基值是 `before_request.attempt` 和轮询回合 id 后缀。轮询从原始生成复制的基准流选项开始，强制 `deferred:false`，运行 `before_request`，挂载 `before_payload`/`after_response`，然后提交其新意图并像助手生成一样分发。当前全局流设置不影响它。没有轮询重试上限、退避或内部循环。pending 响应必须具有完全相等的句柄并成为下一个源。不匹配的 pending 句柄被规范化为解释不匹配的持久 `error` 响应；响应、用量、`latestAssistantEntryId` 和响应来源 `failure_drain` 原子提交。
+
+完整转换表 — 每行是一个 `commit()`；分类顺序（§3.7）适用于每次轮询结算，取消优先：
+
+| 从 | 触发 | 事务 | 到 |
+|---|---|---|---|
+| assistant `effect_pending` | 结算分类为 `deferred` 且句柄有效 | §3.7 的 deferred 行 | suspended, `poll: 0`, `sourceEntryId: R` |
+| suspended, poll *k* | `resume()`：轮询的 `before_request` 结算提交其意图，消耗调用的单个轮询许可 | 生成新 R′ 和 U′，然后 `TX[ S(deferred{effect_pending, poll k+1, responseEntryId R′, usageId U′}) ]` | effect_pending, poll *k*+1 |
+| effect_pending, poll *k*+1 | fetch 返回**pending**且句柄完全相等 | `TX[ insert response entry R′, upsert lane.leaf = R′, insert usage U′, S(latestAssistantEntryId=R′, deferred{suspended, sourceEntryId R′, poll k+1}) ]` — pending 响应成为下一个源，操作重新挂起；本次调用不再轮询 | suspended, poll *k*+1 |
+| effect_pending | fetch 返回**pending**且句柄不匹配 | 规范化为解释不匹配的持久 `error` 响应：`TX[ insert normalized response R′, upsert lane.leaf = R′, insert usage U′, S(latestAssistantEntryId=R′, failure_drain{error, provenance:response R′}) ]` | failure_drain |
+| effect_pending | fetch 返回**ready**且有工具调用 | `TX[ insert response R′, upsert lane.leaf = R′, insert usage U′, S(latestAssistantEntryId=R′, tools{plan with reserved result ids}) ]` — 结果 id 作为 R′ 的 follower 生成（§1.2） | tools |
+| effect_pending | fetch 返回**ready**且无工具调用 | `TX[ insert response R′, upsert lane.leaf = R′, insert usage U′, S(latestAssistantEntryId=R′, checkpoint{may_finish, includeFinalAssistant:true}) ]` | checkpoint |
+| effect_pending | fetch 以 provider `error` 结算 | `TX[ insert response R′, upsert lane.leaf = R′, insert usage U′, S(latestAssistantEntryId=R′, failure_drain{error, provenance:response R′}) ]` — 轮询没有重试路径 | failure_drain |
+| effect_pending, restored, running control | 崩溃使轮询结果未知；下一次 `resume()` 替换它 | 生成新 R″/U″ 并在**相同**轮询号提交新意图 — 未知结果的轮询从未完成，所以 `poll` 不递增；旧的保留 id 字符串被放弃，从未物化 | effect_pending, poll *k*+1 |
+| effect_pending, cancelled control | 对账，活跃或恢复（§4.5, §4.6） | 在**现有**保留 id 下的合成结算：`TX[ insert synthetic aborted response R′, upsert lane.leaf = R′, insert zero usage U′, S(latestAssistantEntryId=R′, cancelled checkpoint{may_finish}) ]` | cancelled checkpoint → aborted finish |
+| suspended, cancelled control | 对账 | 不开始 fetch；尽力 `cancel_deferred` 目标最新源（§4.6），操作通过 aborted 终态事务结束 | terminal |
+
+### 结构工作
+
+```ts
+type StructuralDecision = { taskId: string } & (
+  | { status: "deciding" }
+  | { status: "generating"; generation: SummaryGeneration }
+);
+
+type SummaryGeneration =
+  | { status: "ready"; context: SummaryContext; nextAttempt: number }
+  | { status: "effect_pending"; context: SummaryContext; attempt: number;
+      request?: { index: 0 | 1; usageId: string } }
+  | { status: "retry_wait"; context: SummaryContext; nextAttempt: number;
+      notBefore: number; errorMessage: string };
+
+interface CompactionState {
+  kind: "compaction";
+  control: Control;
+  customInstructions?: string;
+  structural: StructuralDecision;
+}
+
+type NavigationState =
+  | { kind: "navigation"; control: Control; targetId: string | null; label?: string;
+      summarize: false; phase: { kind: "ready_to_commit" } }
+  | { kind: "navigation"; control: Control; targetId: string; label?: string;
+      customInstructions?: string; summarize: true;
+      phase: { kind: "summary"; structural: StructuralDecision } };
+```
+
+结构准备从保留的源叶子和设置快照构建，规范化（`Set<string>` 文件操作字段变为排序数组），并在决策钩子之前与 `deciding` 状态在同一个事务中写入一次到 `op.preparation/{operationId}:{taskId}` 寄存器（§3.9）。状态只携带 `taskId`；确定性键定位寄存器，钩子/生成器将数组水合回源准备类型。重新打开从不从当前设置重建它，所以 provider 看到钩子批准的相同摘要输入。
+
+一次结构尝试可能使用现有压缩实现发出一个或两个 provider 请求。其请求回调先提交 `request:{index,usageId}`，然后通过嵌套的 Effects 动作执行该 provider 请求，然后原子写入用量并清除/推进请求字段。中间内容保持进程本地；任何恢复的 `effect_pending` 尝试被视为完全不确定，在捕获的策略下开始更晚的尝试，而不是继续请求二。持久的 `generating` 决策阻止其决策钩子重新运行。
+
+## 3.3 Lane 状态与当前状态有效性
+
+```ts
+interface LaneState {
+  currentOperationId: string | null;
+  /** 保留的条目 id；载荷在 pending.entry 寄存器中 (§2.2)。 */
+  pendingNextRun: string[];
+}
+```
+
+恢复只验证当前 Lane 和操作寄存器以及它们直接命名的条目/寄存器；没有历史可审计，也不存在历史。必需检查：
+
+- `lane.state/{lane}` 保存一个 `LaneState`；当它命名操作 O 时，`op.meta/O` 保存该 Lane 的一个 `Operation`，`op.state/O` 保存与 O 的意图种类兼容的 `OperationState`；
+- 当前状态或 `op.meta` 命名的每个条目 id — 触发、最新助手、批次助手、延迟源、已完成结果、prompt 条目、非空 `sourceLeafId`、导航意图的非空 `targetId`、Lane 叶子 — 解析为预期类型的现有条目；
+- 保留的响应/结果/用量 id（如果已物化）包含预期的种类和身份；未物化的保留 id 解析为空，这是预期的结算前条件，从不是错误；
+- `inbox.*`、`control.drained*` 和 `pendingNextRun` 中的每个 id 有一个带有效载荷的 `pending.entry` 寄存器；每个 effect-pending 调用有其 `op.tool_args` 寄存器；每个结构决策有其 `op.preparation` 寄存器；
+- 工具源索引完整、有序、唯一、在范围内，并使用唯一的结果 id；已完成的结果条目匹配其源调用；
+- 取消、导航源/目标和结构源组合满足状态判别。
+
+运行时 schema 在发布前验证每个解码的寄存器值。`lane.lastResult` 在其公共读取路径上验证 — outcome/error/`runCompletion` 组合对操作种类必须合法，已完成的 run 只在 `runCompletion: "terminated_tools"` 时省略其最终助手 — 但它从不是恢复输入（§3.13）。这些有界检查拒绝 TypeScript 转换函数不可能产生的损坏/导入状态。
+
+## 3.4 原子转换规则
+
+> 在内存中计算下一个完整状态，然后原子提交使该状态为真的每个条目插入、用量插入和寄存器写入。
+
+写入完整 `LaneState` 的事务在 Lane 变更线内重读最新寄存器值，只更改该转换拥有的字段。特别是，终态事务清除 `currentOperationId` 同时保留并发接受的 `pendingNextRun`。条件转换通过寄存器 `seq` 识别它们扩展的状态 — `op.state` seq、`lane.state` seq，以及转换快照配置时预期的 `lane.config` seq（§4.1）— 从不通过值 id；CAS token 变了，线性化没有。下面的每条边恰好是一个 `commit()`。
+
+## 3.5 状态图
+
+```mermaid
+stateDiagram-v2
+    [*] --> idle
+    idle --> checkpoint : prompt() 接受
+
+    checkpoint --> assistant : continuation = need_assistant
+    checkpoint --> compaction : 上下文阈值
+    checkpoint --> checkpoint : 应用写入 / 消费 steer / 消费 follow-up
+    checkpoint --> terminal : may_finish + 收件箱为空
+
+    assistant --> assistant : 可重试错误 (retry_wait)
+    assistant --> tools : toolUse
+    assistant --> compaction : 溢出（第一次）
+    assistant --> deferred : stopReason deferred
+    assistant --> checkpoint : stop / 真正的 length
+    assistant --> failure_drain : 终端错误 / 重试耗尽 / 第 2 次溢出
+
+    tools --> tools : 每调用意图 + 结算
+    tools --> checkpoint : 批次完成
+
+    compaction --> checkpoint : resumeAfter 恢复
+    compaction --> failure_drain : 溢出被拒绝；阈值/溢出生成失败
+
+    deferred --> deferred : 轮询返回 pending
+    deferred --> tools : ready 响应有调用
+    deferred --> checkpoint : ready 响应无调用
+    deferred --> failure_drain : provider 错误
+
+    failure_drain --> checkpoint : 应用了新的用户上下文输入
+    failure_drain --> terminal : 收件箱排空（失败）
+
+    checkpoint --> terminal : 中止对账（aborted）
+    compaction --> terminal : 结构提交前中止（aborted）
+    failure_drain --> terminal : 写入排空后中止对账（aborted）
+    terminal --> [*]
+```
+
+`terminal` 不是一个状态。它是终态事务（§3.13）：提交后，操作完全没有 `op.state` 寄存器。
+
+独立操作：
+
+```
+compaction:  deciding ──钩子拒绝────────────→ 终态 TX（declined）
+                      ──钩子提供结果────────→ 终态 TX（completed）
+                      ──钩子选择生成───────→ generating ──→ 终态 TX（completed|failed）
+
+navigation:  ready_to_commit ────────────────→ 终态 TX（completed）
+             summary.deciding ──钩子拒绝────→ 终态 TX（declined；不移动）
+                              ──→ generating ──→ 终态 TX（completed|failed）
+```
+
+被拒绝的带摘要导航不移动任何东西：叶子保持在源，终态事务记录结果 `declined`。在任何结构提交之前中止以 `aborted` 结束，同样不移动（§4.6）。
+
+## 3.6 接受
+
+| 从 | 触发 | 事务 |
+|---|---|---|
+| 空闲 Lane | `before_run` 之后的 `prompt()` | `TX[ 按顺序插入捕获的 nextRun 项的条目（载荷来自其 pending.entry 寄存器）和新消息（调用者 prompt、钩子注入），删除捕获的 pending.entry 寄存器，upsert lane.leaf = 最新条目，upsert op.meta/O，S(run{捕获的设置, checkpoint need_assistant(false), trigger = 最新条目, skipInboxOnce, 空 inbox})，L({currentOperationId: O, 捕获的 id 从 pendingNextRun 移除}) ]` |
+| 保留的空闲 Lane | 带非空准备的 `compact()` | `TX[ upsert op.preparation/O:{taskId} = P, upsert op.meta/O, S(compaction{deciding, taskId}), L({currentOperationId: O}) ]` |
+| 空闲 Lane | 验证后无摘要的 `navigateTree()` | `TX[ upsert op.meta/O, S(navigation{ready_to_commit}), L ]` |
+| 保留的空闲 Lane | 带准备的带摘要 `navigateTree()` | `TX[ upsert op.preparation/O:{taskId} = P, upsert op.meta/O, S(navigation{summary.deciding, taskId}), L ]` |
+
+捕获的 `nextRun` 项已有其载荷在 `pending.entry` 寄存器中；接受从那些载荷插入它们的条目，删除寄存器，并从 `pendingNextRun` 中移除 id — 唯一刻意双重写入的放置一半（§1.8）。晚捕获的项保持其入队生成的 id（§1.2）。
+
+手动压缩首先分配其操作 id 并获取进程本地 Lane 准入保留，然后读取准备。带摘要的导航在收集/构建分支准备时使用相同的保留；无摘要的导航不需要，因为验证和接受共享一个 Lane 线作业。保留期间，竞争操作收到命名该临时 id/种类的 `LaneBusy`，空闲树写入等待；`nextRun` 和配置更改仍然可以提交，因为它们不移动叶子。空压缩准备释放保留并返回 `NothingToCompact`，无操作写入。非空准备只对未更改的保留源叶子接受。进程死亡丢弃保留并使 Lane 空闲。
+
+接受前拒绝**不写任何东西**：`LaneBusy`、`NothingToCompact`、`InvalidNavigation`（目标是当前叶子、根目标上的标签、从根摘要、或带摘要的空目标）、`UnknownTarget`（非空目标缺失）、`MissingIdentities`（模型、provider 或活跃工具名无法解析），以及当接受将追加零条目时的 `InvalidMessage` — 没有钩子注入和捕获 `nextRun` 项的空规范化 prompt 没有最新条目来锚定检查点的触发。Prompt 在 `before_run` 之前分配其操作 id，使钩子幂等键稳定。钩子仍在接受之前运行；如果并发调用者赢得 Lane，其输出和临时 id 被丢弃，操作不存在。
+
+**接受必须观察到 `currentOperationId === null`。** 因为接受在 Lane 变更线上，这是验证，不是比较并交换。
+
+## 3.7 助手生成
+
+| 从 | 触发 | 事务 | 到 |
+|---|---|---|---|
+| checkpoint `need_assistant` | drive | 条件性地将当前 Lane 配置、流选项和规范化重试策略内联快照到上下文中，在 `TX[ S(assistant{ready, nextAttempt:1}) ]` | ready |
+| assistant `ready` | `before_request` 聚合完成 | 生成 R 和 U，然后 `TX[ S(assistant{effect_pending, attempt=nextAttempt, responseEntryId R, usageId U, intendedOutputLimit, contextWindow}) ]` | effect_pending |
+| effect_pending | 以工具调用结算 | `TX[ insert response entry R, upsert lane.leaf = R, insert usage U, S(latestAssistantEntryId=R, tools{plan with reserved result ids}) ]` | tools |
+| effect_pending | 可重试错误，尝试次数未用完 | `TX[ insert response entry R, upsert lane.leaf = R, insert usage U, S(latestAssistantEntryId=R, assistant{retry_wait, nextAttempt k+1, notBefore}) ]` | retry_wait |
+| effect_pending | 第一次溢出，准备非空 | `TX[ insert response entry R **规范化为 error**, upsert lane.leaf = R, insert usage U, upsert op.preparation/O:{taskId} = P, S(latestAssistantEntryId=R, compaction{reason:overflow, structural:{deciding, taskId}, resumeAfter:{checkpoint, prior trigger, need_assistant(true)}}) ]` | compaction |
+| effect_pending | 第一次溢出，准备为空 | `TX[ insert normalized response entry R, upsert lane.leaf = R, insert usage U, S(latestAssistantEntryId=R, failure_drain{error, provenance:response R}) ]` | failure_drain |
+| effect_pending | `stopReason: "deferred"` | `TX[ insert response entry R, upsert lane.leaf = R, insert usage U, S(latestAssistantEntryId=R, deferred{suspended, sourceEntryId R, poll 0, configuration/options copied}) ]` | deferred |
+| effect_pending | `stop` 或真正的 `length` | `TX[ insert response entry R, upsert lane.leaf = R, insert usage U, S(latestAssistantEntryId=R, checkpoint{may_finish, includeFinalAssistant:true}) ]` | checkpoint |
+| effect_pending | 终端错误、重试耗尽或第 2 次溢出 | `TX[ insert response entry R, upsert lane.leaf = R, insert usage U, S(latestAssistantEntryId=R, failure_drain{error, provenance:response R}) ]` | failure_drain |
+| retry_wait | `notBefore` 已过 | `TX[ S(assistant{ready, nextAttempt:k+1}) ]` | ready |
+
+**永远不存在"没有用量的响应"或"没有决策的响应和用量"。** 三者一起落地或都不落地。`R` 和 `U` 在意图时生成，在结算插入完整行之前只作为状态中的字符串存在（§2.2）。计划工具的结算将每个 `resultEntryId` 生成为 `R` 的 follower，继承其 48 位时间戳（§1.2），所以助手及其结果在构造上形成一个 id 连贯的组。
+
+### 分类顺序
+
+纯函数，在结算事务之前在内存中计算。首次匹配获胜。
+
+| 条件 | 结果 |
+|---|---|
+| `control.status === "cancel_requested"` | 将停止原因规范化为 `aborted`；在 cancelled 控制下提交 `checkpoint{may_finish, includeFinalAssistant:true}`，然后对账写入/完成 |
+| 溢出：适配器报告的，或消息匹配上下文限制模式的 `error`，或输出低于 `intendedOutputLimit` 的 `length` | **将停止原因规范化为 `error`**；压缩（第一次）或 `failure_drain`（第二次） |
+| 带有效句柄的 `deferred` | deferred suspended |
+| 可重试 `error`，尝试未用完 / 否则 | retry_wait / failure_drain |
+| `toolUse`，或带调用的已接受响应 | tools |
+| `stop` 或真正的输出限制 `length` | checkpoint `may_finish` |
+
+两种规范化发生在提交时，都是刻意的。已取消的响应以 `aborted` 提交。溢出分类的响应以 `error` 提交。两种情况下原始停止原因被覆盖，原因以人类可读形式保存在 `errorMessage` 中。
+
+因为已提交的响应是 `error`，§2.5 规则 3 自动将它从上下文中丢弃 — 压缩和操作状态不携带对它的引用，也不存在专门的省略规则。响应作为持久历史留在树中，因为 provider 请求发生了并被计费。
+
+**溢出检测是启发式的，必须标记为启发式。** 三个来源，可靠性递减：
+
+1. **适配器报告。** 能在结算时计算 `usage.input + usage.cacheRead > contextWindow` 的 provider 适配器设置 `stopReason: "error"`，消息匹配上下文限制模式。这不需要新的停止原因，也不需要更改任何适配器的停止原因映射，这很重要因为这些映射通常在未知值上抛出异常。这样做的适配器还应该要求输出可忽略不计，所以仅仅触发计数器的实质性答案不会被丢弃。
+2. **错误消息匹配。** Provider 通常以 HTTP 错误返回上下文限制失败，以带消息的 `error` 到达。匹配它是字符串匹配，无论放在哪里都很脆弱。
+3. **低于 `intendedOutputLimit` 的 `length`。** 输出限制是调用者意图的 `maxTokens`，或模型的最大值 — 在任何上下文截断*之前*。实际发送的值永远不能作为参考：某些 provider 完全拒绝显式输出上限，而 Pi 将其他限制截断到剩余上下文。这覆盖了上下文截断的请求返回 16 个推理 token 而意图是 128k（恢复）、小米/Qwen 风格的零输出 `length`（恢复）以及完全用尽的显式 1,024 上限（真正停止）— 没有上下文百分比启发式。
+
+可恢复的响应被**丢弃**：像可重试错误一样，它从不成为条目，所以重试时不需要从上下文中清除任何东西，无论是活跃还是崩溃后。其保留的结果 id 保持未满足；其成本已经在请求结算时写入的 `usage` 行中持久化。
+
+**每次会话输入一次溢出恢复。** 只有当没有溢出原因的压缩比此运行的最新已消耗会话消息更新时，溢出压缩才可能开始。该窗口内的第二次可恢复响应追加放弃错误条目并通过排空路径失败运行 — `length` 响应从不重置守卫；只有已消耗的会话输入会重置。这将压缩并重试循环限制在每次用户操作一次尝试。`before_compaction` 拒绝或空压缩准备对原因 `overflow` 同样是终端的：没有压缩请求就无法容纳。钩子提供的溢出压缩在条目之前写入其压缩尝试，所以守卫计算它 — 这是写入尝试记录的唯一钩子提供的摘要。
+
+## 3.8 工具
+
+| 从 | 触发 | 事务 | 到 |
+|---|---|---|---|
+| 调用 *i* `planned` | 放行通过（`before_tool`、查找、参数验证） | `TX[ upsert op.tool_args/O:{stepId}:{i} = 有效参数, S(call i = effect_pending, replay) ]` | dispatch |
+| 调用 *i* `effect_pending` | 副作用已结算，`after_tool` 已应用 | `TX[ insert result entry, upsert lane.leaf, insert tool usage row (如果报告了), S(call i = completed, terminate) ]` | tools 或 checkpoint |
+| 调用 *i* `planned` | 未知工具 / 无效参数 / `before_tool` 阻止或抛出 / 控制已取消 | `TX[ insert synthetic error result entry, upsert lane.leaf, S(call i = completed, terminate 来自有意阻止，否则 false) ]` | tools |
+| 所有调用完成 | — | 折叠进最后一个结算，它还删除批次的 `op.tool_args/{O}:{stepId}:*` 寄存器 | checkpoint |
+
+批次的完成转换是：
+
+- **每个**已完成的调用设置 `terminate: true` → `checkpoint{may_finish, includeFinalAssistant: false}`
+- 否则 → `checkpoint{need_assistant(overflowRecoveryUsed: false)}`
+
+`terminate` 的存在使工具可以在没有另一个 provider 回合的情况下结束运行。动机案例是替代结构化输出的"提交最终结果"工具：模型调用它，Harness 提交结果，运行以那些工具结果作为最终条目完成 — `run_end` 然后不携带 `finalMessage`。没有这个，每个这样的运行都要为另一个模型回合付费，其唯一工作就是停止。
+
+模式：
+
+- **Sequential**（选项，或任何被调用工具声明 `executionMode: "sequential"`）：放行 → 意图 → 执行 → 终结 → 提交，一次一个调用。
+- **Parallel**（默认）：放行和意图提交按源顺序发生；分发不等待较早的调用；副作用并发结算；阶段 3、结果消息生命周期和结果提交按源顺序等待和终结。
+
+被阻止和无效的调用跳过意图提交和副作用，但仍在其源位置提交结果。它们的 `op.tool_args` 寄存器从不写入。
+
+调用内部通过 `sourceIndex` 跟踪。钩子、事件和工具上下文看到 provider 的 `toolCallId` 和工具名称 — 从不看到索引。
+
+## 3.9 摘要生成 — 压缩与导航摘要
+
+两种操作通过相同的 `deciding → generating → result` 机制生成摘要，这就是它们一起规范的原因。各轴：
+
+| | compaction | navigation |
+|---|---|---|
+| **独立操作** | `lane.compact()` — 原因 `manual` | `lane.navigateTree(target)` |
+| **运行内的阶段** | 原因 `threshold`、`overflow` | — |
+| **准备** | 压缩准备：要摘要的消息、保留尾部、拆分回合标志、token 统计、文件操作 | 分支准备：要摘要的分支消息、token 统计、文件操作 |
+| **决策钩子** | `before_compaction` | `before_navigation` |
+| **结果条目** | `compaction`（parent = 源叶子） | `branch_summary`（parent = 目标；fromId = 源叶子） |
+
+| 从 | 触发 | 事务 | 到 |
+|---|---|---|---|
+| `deciding` | 钩子拒绝 | 独立：终态事务，结果 `declined` · 运行内：`TX[ S(failure_drain{provenance:structural taskId}) ]` | terminal / failure_drain |
+| `deciding` | 钩子提供结果 | 独立：终态事务，结果 `completed` · 运行内：结果发布写入加 `S(resumeAfter)` | terminal / checkpoint |
+| `deciding` | 钩子选择生成 | 条件性内联快照当前配置/策略在 `TX[ S(generating{ready}) ]` — **决策钩子将永远不会再次运行** | generating ready |
+| generating ready / 重试已过 | drive | `TX[ S(effect_pending, attempt k) ]` | effect_pending |
+| generating effect_pending | 一个嵌套请求返回 | `TX[ insert usage row under request.usageId, S(effect_pending, request cleared, usageIds += id) ]`；在请求二之前提交另一个请求意图 | effect_pending |
+| generating effect_pending | 可重试尝试结果 | 用量已持久；`TX[ S(retry_wait) ]` | retry_wait |
+| generating effect_pending | 终端或尝试耗尽 | 独立：结果 `failed` 的终态事务（§3.13） · 运行内：`TX[ S(failure_drain{provenance:structural taskId}) ]` | terminal / failure_drain |
+| generating effect_pending | 压缩成功 | 独立：`TX[ insert result entry, upsert lane.leaf, terminal writes (§3.13) ]` · 运行内：结果发布写入加 `S(resumeAfter)` | terminal / checkpoint |
+
+结构 provider 流是内部的：它们**不**发出公共助手消息生命周期。现有摘要生成器保留，但其一/两请求回调使用 §3.2 和 §4.2 的嵌套请求意图/副作用/用量边界。中间内容不持久化；最终事务之前的崩溃使整个尝试未知，更晚编号的尝试只在捕获的重试策略下开始。失败尝试的用量无论如何留在台账中 — 终态清理删除寄存器，从不删除台账行（§1.6）。
+
+### 实例演练 — 溢出
+
+`e_40` 是一个等待助手回合的工具结果。请求不适合。
+
+```
+… e_38 ── e_39 ── e_40                     phase: assistant, effect_pending
+                                           continuation 是 need_assistant(false)
+```
+
+**1. 结算。** 分类说是溢出。准备针对将来的分支构建；因为已知响应规范化为 `error`，普通投影排除它。响应和准备然后一起提交：
+
+```
+TX[ insert e_41 = { …助手响应, stopReason: "error",
+                    errorMessage: "context window exceeded: …" },
+    upsert lane.leaf/main = "e_41", insert usage u_41,
+    upsert op.preparation/op_9:t_1 = <结构准备>,
+    S(compaction{ reason: overflow,
+                  structural: { deciding, taskId: "t_1" },
+                  resumeAfter: { checkpoint, triggerEntryId: "e_40",
+                                 continuation: need_assistant(true) } }) ]
+
+… e_38 ── e_39 ── e_40 ── e_41
+```
+
+**2. 压缩。** 持久准备由 §2.5 的普通规则构建。`e_41` 是 `error` 响应，所以规则 3 丢弃它 — 从摘要输入和 `retainedTail` 中都一样，没有特殊情况：
+
+```
+… e_40 ── e_41 ── e_42 (压缩)
+                  retainedTail: [e_39, e_40]        ← e_41 按规则 3 缺失
+```
+
+尾部结束在 `e_40`，一个工具结果，这是即将请求助手回合的请求的正确形状。
+
+**3. 恢复。** `resumeAfter` 恢复 `need_assistant(overflowRecoveryUsed: true)`。上下文现在是摘要 + 尾部 + `e_42` 之后的任何内容，很小：
+
+```
+… e_41 ── e_42 ── e_43        对 e_40 的回答
+   ✗ (error, out of context)
+```
+
+`e_41` 作为持久历史永远留在树中 — 一个请求发生了并被计费。如果重试*再次*溢出，`overflowRecoveryUsed` 已经是 `true`，运行进入 `failure_drain` 而不是循环压缩。消耗新的用户输入追加到树并将标志重置为 `false`。
+
+## 3.10 导航
+
+无摘要和带摘要都在**一个**事务中完成 — 导航的终态事务（§3.13）内联其结果发布写入：
+
+```
+TX[ insert 钩子报告的用量行（仅钩子提供的摘要）,
+    upsert lane.leaf = 目标,
+    insert 摘要条目带其显示用量快照（当 summarize 时；
+      parent 是目标；fromId = 操作的 sourceLeafId —
+      导航前源叶子）,
+    upsert lane.leaf = 摘要条目（当 summarize 时）,
+    upsert fact.label（当有标签时）,
+    delete 操作的 op.* 寄存器,
+    upsert lane.lastResult = { kind: "navigation", outcome: "completed", leafId },
+    L({ currentOperationId: null }) ]
+```
+
+写入在事务内按顺序应用。生成的 provider 用量已在 §3.9 中按请求写入，这里不再写入；摘要载荷只快照其产生尝试的用量。摘要条目显式命名目标为父节点，后续寄存器写入使该摘要成为已完成的 Lane 叶子。崩溃看到的是仍在源处的未触及导航，或完全完成的导航。**不存在准备好的摘要状态和移动后恢复状态。** 此事务之前的中止以无条目追加的 aborted 终态事务结束；之后的中止意味着操作已完成。
+
+## 3.11 收件箱、队列、延迟写入
+
+每个排队的准入生成该项的条目 id（§1.2）并将其载荷一次写入 `pending.entry/{id}`；队列列表只携带 id。
+
+| 公共输入 | 何时准入 | 事务 |
+|---|---|---|
+| `nextRun(msg)` | 任何状态，包括空闲 | `TX[ upsert pending.entry/{id} = payload, L(pendingNextRun += id) ]` — 从不开始运行 |
+| `steer(msg)` | 打开的运行且控制为 running — 包括延迟挂起；在 `cancel_requested` 下 → `NoActiveRun` | `TX[ upsert pending.entry/{id} = payload, S(inbox.steer += id) ]` |
+| `followUp(msg)` | 打开的运行且控制为 running — 包括延迟挂起；在 `cancel_requested` 下 → `NoActiveRun` | `TX[ upsert pending.entry/{id} = payload, S(inbox.followUp += id) ]` |
+| 树写入，运行活跃 | 包括挂起和取消中 | `TX[ upsert pending.entry/{id} = payload, S(inbox.writes += id) ]` — 在中止中存活 |
+| 树写入，Lane 空闲 | 空闲 | `TX[ insert entry, upsert lane.leaf ]` |
+| 树写入，结构操作打开 | — | 等待操作结束，然后重新评估 |
+| `cancelQueued(id)` | 项仍待处理 | `TX[ S 或 L 移除该 id, delete pending.entry/{id} ]` |
+| 检查点消耗输入 | 符合条件 | `TX[ 从寄存器载荷插入条目, 删除其 pending.entry 寄存器, upsert lane.leaf, S(ids 移除, continuation → need_assistant(false), triggerEntryId = 最新条目, skipInboxOnce = true) ]` |
+| 第一次 `abort()` | 运行活跃 | `TX[ S(control = cancel_requested, requestedAt, drainedSteer, drainedFollowUp, steer/followUp 清空) ]` — 已排空的 pending.entry 寄存器**不**删除 |
+| 完成 | 收件箱为空，无必需 continuation | 终态事务（§3.13） |
+
+`cancelQueued` 分类，按顺序：id 仍在队列列表中待处理 → 移除它并在一个事务中删除其 `pending.entry` 寄存器；内容消失，从未触及树，调用返回 `cancelled`。该 id 下存在条目 → `already_consumed`。都不是 → `not_found` — 之前已取消、被中止清除、或从未存在。重试丢失取消的客户端将 `not_found` 视为成功。没有处置寄存器，这里没有任何东西是恢复输入。
+
+第一次 `abort()` 将 steer/follow-up id 移入 `control.drainedSteer`/`control.drainedFollowUp` 但不删除它们的任何 `pending.entry` 寄存器：`AbortResult` 和崩溃后的 `SuspendedOperation.aborting` 从那些寄存器解引用已排空的载荷。它们在终态事务中死亡（§3.13），从不更早。延迟写入留在 `inbox.writes` 中并在对账期间应用。
+
+因为接受、取消、消耗、中止和完成都在 Lane 变更线上序列化，每个竞争恰好有两种可能的历史，并且**没有任何项在持久状态中既是待处理又是已应用**：在每个提交边界，排队的 id 有其寄存器（待处理或已排空）、其条目（已消耗）或两者都没有（已取消）— 从不两者都有。
+
+## 3.12 检查点过程
+
+顺序很重要。在每个队列排空点，`"all"` 按接受顺序消耗每个当前符合条件的项；`"one-at-a-time"` 只消耗最旧的并保留其余。任何投影性排空设置持久的 `skipInboxOnce`；在那次下一遍中，规划器跳过步骤 1–2，开始生成，并在就绪状态转换中清除该标志。因此崩溃不能把一次一个变成全部排空。
+
+1. 除非 `skipInboxOnce`，原子应用已接受的延迟写入。
+2. 除非 `skipInboxOnce`，按 steering 模式原子消耗符合条件的 steering。
+3. 只在 `thresholdCheckedTriggerEntryId !== triggerEntryId` 时运行阈值压缩，将标记的检查点保留在 `resumeAfter` 中。
+4. 如果 continuation 是 `need_assistant`，开始生成并清除 `skipInboxOnce`。
+5. 一旦助手和工具 continuation 耗尽，原子消耗符合条件的 follow-up。
+6. 如果 continuation 是 `may_finish` 且收件箱为空，调用 `before_run_end`。
+7. 条件性完成 — 终态事务（§3.13）。
+
+已消耗的 steer/follow-up 和投影性消息写入进入 `need_assistant(false)`，设置 `triggerEntryId` 为最新追加的条目，并设置 `skipInboxOnce`。工具结果做同样的事，除非每个结果都终止。未投影的自定义写入被追加并从收件箱移除，但保留先前的 continuation、失败来源和溢出标志。在 cancelled 控制下，每个延迟写入被追加并移除，不更改阶段/continuation 或开始工作；对账在写入排空后以 aborted 终态事务结束。
+
+`before_run_end` 可能返回一个 follow-up。它**只在**控制仍在运行且操作仍在同一完成边界时提交；否则过期的钩子结果被丢弃。Follow-up 出生即放置 — 其条目和 `need_assistant` 状态一起提交，没有待处理寄存器。
+
+`failure_drain` 应用已接受的延迟写入并消耗符合条件的会话输入；如果没有任何消耗开始新工作，它进入终端失败。如果消耗的输入开始新工作，它进入 `checkpoint{need_assistant}`，失败成为树中的持久历史但不再驱动编排。
+
+## 3.13 终态事务
+
+终态事务删除操作拥有的每个寄存器，将结果记录在 `lane.lastResult` 中，并清除 Lane 的 `currentOperationId`。提交后，操作唯一的持久足迹是它产生的会话条目和台账行。
+
+结果在内存中、提交前、从最终操作状态计算 — 与调用者的 promise 解析相同的值。持久化的是其寄存器形式：
+
+```ts
+type LaneLastResult = {
+  operationId: string;
+  kind: "run" | "compaction" | "navigation";
+  leafId: string | null;
+  /** 最新已结算助手（当结果包含时，仅 runs）。 */
+  finalAssistantEntryId?: string;
+} & (
+  | { outcome: "failed"; error: OperationError; runCompletion?: never }
+  | { outcome: "completed"; error?: never;
+      runCompletion?: "assistant" | "terminated_tools" }
+  | { outcome: "declined" | "aborted"; error?: never; runCompletion?: never }
+);
+```
+
+正常运行的完成复制 `RunState.latestAssistantEntryId` 并在 `may_finish.includeFinalAssistant` 为 true 时记录 `runCompletion: "assistant"`。全部终止的工具批次记录 `runCompletion: "terminated_tools"` 并省略最终助手。失败和中止的运行结果在非空时包含最新已结算助手，否则省略该字段。结构操作省略 `runCompletion` 和最终助手。只有终端转换构造 `LaneLastResult`。
+
+每个终态事务，对每个操作种类和结果，有一个形状：
+
+```
+TX[ <结果发布写入，当终端转换也发布内容时：
+     §3.9 的独立摘要条目和叶子移动，§3.10 的导航写入>,
+    delete op.meta/{O},
+    delete op.state/{O},
+    delete op.tool_args/{O}:*        防御性前缀扫描 — 用 keyPrefix 的
+                                     listRegisters (§1.5)；批次完成已经
+                                     原子删除这些 (§3.8)，
+    delete op.preparation/{O}:*      前缀扫描；运行内压缩在恢复后
+                                     留下其准备，
+    delete pending.entry/{id}        每个操作拥有的待处理 id，
+    upsert lane.lastResult/{lane} = <计算的结果>,
+    L({ currentOperationId: null }) ]
+```
+
+操作拥有的待处理 id 是剩余的 `inbox.steer ∪ inbox.followUp ∪ inbox.writes` 加 `control.drainedSteer ∪ control.drainedFollowUp` — 在中止排空中存活的寄存器在这里死亡（§3.11）。**从不 `lane.state.pendingNextRun`**：那些寄存器是 Lane 拥有的，比操作存活更久，只在消费或取消时死亡。台账行从不删除（§1.6）。`L` 写入在 Lane 变更线上重读最新 `LaneState` 并只清除 `currentOperationId`，保留并发接受的 `pendingNextRun`（§3.4）。
+
+对于 §0.4 形状的已完成运行 — prompt `e_50`，工具调用 `e_51`/`e_52`，最终答案 `e_53`：
+
+```
+TX[ delete op.meta/op_9,
+    delete op.state/op_9,
+    delete op.tool_args/op_9:s_1:0,   ← 通常在批次完成时已消失
+    upsert lane.lastResult/main = { operationId: "op_9", kind: "run",
+                                    outcome: "completed", leafId: "e_53",
+                                    finalAssistantEntryId: "e_53",
+                                    runCompletion: "assistant" },
+    upsert lane.state/main = { currentOperationId: null, pendingNextRun: [] } ]
+```
+
+之后，会话精确保存会话条目、台账行和 Lane 的寄存器（`lane.leaf`、`lane.config`、`lane.state`、`lane.lastResult`）。运行的约 10 个 `op.state` 修订、其工具参数寄存器和任何待处理载荷只作为寄存器覆盖存在，然后消失 — 没有需要收集的东西（§1.8）。
+
+**观察契约。** 终端结果通过活跃调用者的 promise（和对应的 `run_end`/`compaction_end`/`navigation_end` 事件）观察一次，它携带完整的内存结果；之后通过 `lane.lastResult` 观察，直到同一 Lane 上的下一个终态事务覆盖它。`lane.lastResult` 只由终态事务写入 — 每个 Lane 一个有界寄存器，永远。恢复从不读取它：恢复将 `currentOperationId: null` 的 Lane 视为空闲，不管寄存器的内容。它的存在是为了让接受了一个操作、丢失了进程并重新打开的应用仍然可以回答"`op_9` 发生了什么？" — 包括树单独无法重建的结果：结构失败的错误、`declined`，以及叶子移动的 `aborted` 与 `completed` 歧义。
+
+本节携带的不变量（Part 9 中重述）：`op.*` 寄存器和操作拥有的 `pending.entry` 寄存器存在**当且仅当**其操作打开，因为终态事务在清除 `currentOperationId` 的同时原子删除它们。不存在需要观察或修复的部分清理状态。
