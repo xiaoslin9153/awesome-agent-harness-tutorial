@@ -1,6 +1,6 @@
 ---
 title: Pi AgentHarness v1 深度解析
-description: 逐层拆解 Pi AgentHarness v1 的存储模型、会话树、操作状态机和恢复机制，理解它如何实现持久化 Agent 运行时。
+description: 从零理解 Pi AgentHarness v1 的持久化设计——存储模型、操作状态机、崩溃恢复、并发控制，每个机制都用具体例子走一遍。
 lang: zh-CN
 content_status: draft
 source_version: 2026-08-25
@@ -9,384 +9,633 @@ source_url: https://github.com/earendil-works/pi/blob/main/packages/agent/docs/h
 
 # Pi AgentHarness v1 深度解析
 
-Pi 的 AgentHarness v1 是一份约 2900 行的实现规范，描述了一个**持久化 Agent 运行时**的完整设计。它解决的核心问题是：当 Agent 执行到一半崩溃了，如何保证不重复副作用、不丢失输入、不产生不一致状态？
+这篇文章带你从零理解 Pi AgentHarness v1 的设计。不是摘要，而是逐层拆解每个机制——为什么存在、解决什么问题、怎么工作。读完你应该能自己画出整个系统的状态图。
 
-这篇文章逐层拆解它的设计，帮助你理解每一个机制为什么存在。
+## 1. 从一个崩溃场景开始
 
-## 1. 核心问题：崩溃安全
-
-想象一个 Agent 正在执行任务：
-
-1. 用户说"删除旧迁移文件，然后跑测试"
-2. 模型返回两个工具调用：`delete_file` 和 `run_tests`
-3. `delete_file` 开始执行，删除了几个文件
-4. 进程崩溃了
-
-重启后，系统面临什么状态？文件已经删了，但测试还没跑。如果直接重新执行整个任务，`delete_file` 会再次运行——但文件已经不在了。如果跳过 `delete_file` 只跑测试，系统怎么知道删除已经完成了？
-
-AgentHarness v1 的答案是：**在副作用之前写一条意图记录，在副作用之后写一条结算记录。崩溃后读寄存器就知道该做什么。**
-
-## 2. 三个存储，一个不变量
-
-整个系统建立在三种存储之上：
+假设你在写一个 Coding Agent，用户输入：
 
 ```text
-entries        会话树 — 写一次，追加式
-registers      当前可变状态 — 键值对，覆盖或删除
-usage ledger   成本历史 — 追加式行
+"删除 src/old-migrations/ 目录，然后运行 npm test"
 ```
 
+模型决定分两步：
+
+1. 调用 `bash("rm -rf src/old-migrations/")`
+2. 调用 `bash("npm test")`
+
+现在假设第 1 步执行到一半——文件删了一半——进程崩溃了。重启后你面对什么？
+
+- 文件删了一半，不知道哪些删了哪些没删
+- 不知道 `rm` 命令是否已经完成
+- 不知道是否应该重新执行 `rm`（重新执行可能报错，因为目录已经不存在）
+- 测试还没跑
+
+如果你只是把对话历史重新发给模型，模型可能会说"让我重新删除"——但文件可能已经全删了。或者模型说"跳过删除，直接跑测试"——但你不知道删除是否完整。
+
+这就是 AgentHarness 要解决的核心问题：**崩溃后，系统必须能精确知道发生了什么、没发生什么，然后做出正确的恢复决策。**
+
 :::note
-关键不变量：**每个载荷恰好存在于一个地方**。没有第三种存储。这消除了"数据到底存在哪"的歧义。
+这个问题的本质是：外部副作用（文件系统、网络、进程）没有事务性。你不能"回滚"一个已经执行的 `rm -rf`。你只能在副作用前后留下足够的痕迹，让恢复逻辑做出正确的判断。
 :::
 
-### 2.1 条目（Entry）：不可变的对话记录
+## 2. 三个存储：系统的骨架
 
-条目是会话树中的节点，代表对话中的一条信息：
+AgentHarness v1 把所有持久数据分为三种存储。理解这三种存储及其规则，就理解了整个系统的骨架。
+
+### 2.1 条目（Entry）：不可变的对话树
+
+条目是会话树中的节点，用 `parentId` 链接成树：
+
+```text
+a ── b ── c ── d          ← main 分支
+      └── e ── f          ← 从 b 分叉的分支
+```
+
+四种条目类型：
+
+| 类型 | 存什么 | 举例 |
+|---|---|---|
+| `message` | 用户消息、助手消息、工具结果 | "删除旧迁移" / `tool_call: bash` / `tool_result: success` |
+| `compaction` | 压缩摘要 | "之前的对话讨论了数据库迁移方案..." |
+| `branch_summary` | 分支摘要 | 导航到树的早期位置时生成的摘要 |
+| `custom` | 应用自定义数据 | 代码审查结果、权限决策记录 |
+
+每条消息的存储形式：
 
 ```ts
 interface MessageEntry {
-  id: string;          // UUIDv7
-  parentId: string;    // 指向树中的父节点
+  id: string;           // UUIDv7，前 48 位是时间戳
+  parentId: string;     // 父条目 id，构成树
+  seq: number;          // 全局递增序列号
+  timestamp: number;    // Unix 毫秒
   type: "message";
-  message: AgentMessage;  // 用户消息、助手消息或工具结果
+  message: AgentMessage; // 实际的消息内容
 }
 ```
 
-四种类型：
+**关键规则：条目写一次，从不修改或删除。**
 
-| 类型 | 用途 | 特点 |
-|---|---|---|
-| `message` | 用户消息、助手消息、工具结果 | 对话的核心内容 |
-| `compaction` | 压缩摘要 | 替换旧上下文，保留 `retainedTail` |
-| `branch_summary` | 分支摘要 | 导航时生成，标记分支分叉点 |
-| `custom` | 应用自定义数据 | 通过 `entryProjectors` 投影到上下文 |
-
-关键规则：
-
-- 条目**写一次**，从不修改或删除
-- 每个条目的 `parentId` 链接到树中的父节点，形成树结构
-- 压缩条目存储完整的 `retainedTail`，使上下文**永远不需要越过压缩读取更早的内容**
+为什么？因为条目是**权威事实**。如果助手说"我调用了 bash 工具"，这条记录就是事实。你不能事后修改它——修改了就不是事实了。如果需要更正，追加一条新条目。
 
 ### 2.2 寄存器（Register）：唯一的可变状态
 
-寄存器是带命名空间的键值对，保存当前状态：
+寄存器是带命名空间的键值对，保存**当前**状态：
 
-```text
-lane.leaf/{name}     = 条目 id     → Lane 的当前位置
-lane.config/{name}   = 配置        → 模型、思考级别、活跃工具
-lane.state/{name}    = 状态        → 当前操作 id
-op.meta/{opId}       = 操作元数据   → 写入一次，从不覆盖
-op.state/{opId}      = 操作状态     → 程序计数器，每次转换覆盖
-op.tool_args/{key}   = 工具参数     → 放行时写入一次
-pending.entry/{id}   = 待处理载荷   → 排队内容等待放置
-fact.name            = 会话名称
-fact.label/{entryId} = 条目标签
-```
+| 命名空间 | 键 | 值 | 生命周期 |
+|---|---|---|---|
+| `lane.leaf` | Lane 名 | 条目 id | 会话 |
+| `lane.config` | Lane 名 | 模型、思考级别、活跃工具 | 会话 |
+| `lane.state` | Lane 名 | 当前操作 id | 会话 |
+| `op.meta` | 操作 id | 操作元数据（意图、源叶子） | 操作 |
+| `op.state` | 操作 id | **程序计数器**（完整状态） | 操作 |
+| `op.tool_args` | `{opId}:{stepId}:{i}` | 工具有效参数 | 操作 |
+| `pending.entry` | 保留的条目 id | 排队内容载荷 | 直到放置或取消 |
+| `fact.name` | `""` | 会话名称 | 会话 |
+| `fact.label` | 条目 id | 条目标签 | 会话 |
+
+注意两种生命周期：
+
+- `lane.*` 和 `fact.*`：会话级，永远存在（除非显式删除）
+- `op.*`：操作级，操作结束时被终态事务删除
+
+**`op.state` 是整个系统最重要的寄存器。** 它保存操作的完整当前状态，每次状态转换时原子覆盖。恢复时读这一个寄存器就知道操作进行到哪一步了。
 
 :::tip
-`op.state` 就是**程序计数器**。恢复时不需要重放日志或推断位置——直接读这个寄存器就知道操作进行到哪一步了。
+把 `op.state` 想象成程序计数器（Program Counter）。CPU 不需要重放指令历史来知道执行到哪——它只看 PC 寄存器。同样，Harness 不需要重放日志来知道操作进行到哪——它只看 `op.state`。
 :::
 
-### 2.3 用量台账：追加式的成本记录
+### 2.3 用量台账：成本独立于编排
 
 每次 provider 请求结算时写一行：
 
 ```json
-{ "id": "u_7", "seq": 815, "entryId": "e_51", "usage": { "input": 12000, "output": 431 } }
+{
+  "id": "u_7",
+  "seq": 815,
+  "entryId": "e_51",
+  "adjustment": false,
+  "usage": { "input": 12000, "output": 431, "cost": { "amount": 0.03, "currency": "USD" } }
+}
 ```
 
-关键设计：**失败尝试的成本也记录**。即使请求失败、被重试、甚至整个操作后来被中止，台账行不会被删除。计费独立于编排状态。
+关键设计：**即使请求失败、被重试、甚至整个操作后来被中止，台账行也不会被删除。**
+
+为什么？想象一个场景：模型请求花了 $0.50 但失败了，系统重试又花了 $0.50，最终成功了。如果你只记录成功请求的成本，用户看到的是 $0.50。但实际花费是 $1.50。成本是**已经发生的事实**，不因为编排结果而改变。
+
+### 2.4 一个不变量统治一切
+
+:::note
+**每个载荷恰好存在于一个地方**——条目、寄存器或台账。没有第三种存储，没有数据可以藏在两个地方。
+:::
+
+这个不变量消除了一个常见 bug：数据在缓存和数据库之间不一致。这里没有缓存，没有"源数据库"和"副本"之分。每个字节都有一个明确的归属。
 
 ## 3. 原子事务：唯一的写原语
 
-所有写入通过原子事务提交：
+所有写入通过事务提交：
 
 ```
-TX[ insert entry n1, upsert op.meta/O, upsert op.state/O = checkpoint ]
+TX[
+  insert entry n1 (user message),
+  upsert op.meta/op_9 = { intent: run, sourceLeafId: e_41 },
+  upsert op.state/op_9 = { phase: checkpoint, continuation: need_assistant },
+  upsert lane.leaf/main = n1,
+  upsert lane.state/main = { currentOperationId: op_9 }
+]
 ```
 
-规则：
+这个事务做了五件事：
+
+1. 把用户消息追加到树
+2. 创建操作的元数据（意图是什么、从哪个叶子开始）
+3. 设置操作的初始状态（程序计数器归零）
+4. 移动 Lane 的叶子到新条目
+5. 标记 Lane 正在执行这个操作
+
+五件事**要么全部成功，要么全部不发生**。不存在"条目追加了但操作没创建"的中间状态。
+
+### 事务的六条规则
 
 1. **全有或全无**——不存在部分提交
 2. **严格递增的 seq**——写入按顺序获得序列号，跨所有 Lane 全局单调
-3. **事务内有序**——条目可以引用同一事务中较早创建的父节点
-4. **单写者**——一个会话只有一个进程在写
+3. **事务内有序**——后面的写入可以引用前面创建的条目
+4. **id 唯一**——在任何现有 id 下写入都是损坏
+5. **寄存器无历史**——覆盖就没了，没有 undo log
+6. **单写者**——一个会话只有一个进程在写
 
 :::caution
-事务内部没有崩溃状态。崩溃只能发生在两个事务之间。这就是为什么恢复可以枚举所有可能的崩溃位置。
+规则 6 至关重要。如果两个进程同时写一个会话，seq 会冲突、寄存器会互相覆盖、树会分叉出不可预期的形状。整个系统假设单写者，SQLite 后端用围栏租约强制执行。
 :::
 
-## 4. 操作状态机
+## 4. 操作状态机：系统的心脏
 
-### 4.1 操作的生命周期
+### 4.1 什么是操作
 
-一个操作（Operation）是 Lane 上的一单位持久工作：
+操作（Operation）是 Lane 上一单位持久工作。三种：
+
+| 操作 | 触发 | 做什么 |
+|---|---|---|
+| **Run** | 用户发 prompt | 执行完整的 Agent 循环：生成→工具→生成→...直到没有更多工作 |
+| **Compaction** | 阈值触发或手动 | 把旧上下文替换为摘要条目 |
+| **Navigation** | 手动导航 | 移动 Lane 叶子到树中的另一个位置 |
+
+### 4.2 Run 的内部状态机
+
+一个 Run 的状态机：
 
 ```mermaid
 stateDiagram-v2
     [*] --> idle
     idle --> checkpoint : prompt() 接受
-    checkpoint --> assistant : 需要助手响应
+
+    checkpoint --> assistant : need_assistant
     checkpoint --> compaction : 上下文阈值触发
     assistant --> tools : 模型请求工具
-    assistant --> checkpoint : 停止或真正长度
+    assistant --> checkpoint : 停止或真正length
     assistant --> compaction : 溢出（第一次）
-    assistant --> failure_drain : 终端错误或重试耗尽
+    assistant --> failure_drain : 终端错误
     tools --> checkpoint : 批次完成
     compaction --> checkpoint : 恢复
+    failure_drain --> checkpoint : 新输入
+    failure_drain --> terminal : 排空（失败）
     checkpoint --> terminal : 完成
     terminal --> [*]
 ```
 
-### 4.2 程序计数器
+每个状态转换对应一次 `commit()`——一个原子事务覆盖 `op.state`。
 
-`op.state` 寄存器保存操作的**完整当前状态**：
+### 4.3 走一遍完整的 Run
 
-```ts
-interface RunState {
-  kind: "run";
-  control: Control;         // running 或 cancel_requested
-  settings: { ... };        // 接受时快照的配置
-  phase: RunPhase;          // checkpoint | assistant | tools | compaction | deferred
-  inbox: { steer: string[]; followUp: string[]; writes: string[] };
-  latestAssistantEntryId: string | null;
-}
+让我们跟踪一个具体的例子：
+
+```text
+用户："删除旧迁移，然后跑测试"
 ```
 
-每次状态转换覆盖整个寄存器。这意味着：
+**步骤 1：接受**
 
-- **恢复不需要重放日志**——读一个寄存器就够了
-- **状态是自包含的**——不依赖之前的状态
-- **崩溃状态可枚举**——只可能在两个事务之间崩溃
-
-### 4.3 副作用三明治
-
-Provider 请求和工具调用被两次提交包裹：
-
+```text
+TX[
+  insert e_50 (user message "删除旧迁移..."),
+  upsert op.meta/op_9 = { intent: run, sourceLeafId: e_49 },
+  upsert op.state/op_9 = { phase: checkpoint, continuation: need_assistant(false), trigger: e_50 },
+  upsert lane.leaf/main = e_50,
+  upsert lane.state/main = { currentOperationId: op_9 }
+]
 ```
-TX[ "即将执行 X；输出将使用 id R 和 U" ]     ← 意图
-   执行 X                                    ← 不确定窗口
-TX[ 输出 + 用量 + 下一个状态 ]               ← 结算
+
+现在操作已持久化。崩溃后恢复，系统知道"有一个 Run 从 e_50 开始，需要助手响应"。
+
+**步骤 2：助手生成——意图**
+
+```text
+TX[
+  upsert op.state/op_9 = {
+    phase: assistant effect_pending,
+    attempt: 1,
+    responseEntryId: "e_51",
+    usageId: "u_7",
+    context: { model: {...}, retryPolicy: { maxAttempts: 3 } }
+  }
+]
 ```
+
+注意：**还没有发送任何请求给 provider。** 我们只是说"我即将发送请求，响应会写到 e_51，用量会写到 u_7"。这两个 id 现在就确定了。
+
+**步骤 3：Provider 请求（不确定窗口）**
+
+流式传输发生。这是唯一不持久的部分。
+
+**步骤 4：结算**
+
+假设模型返回了一个工具调用：
+
+```text
+TX[
+  insert e_51 (assistant message with tool call),
+  insert u_7 (usage row),
+  upsert lane.leaf/main = e_51,
+  upsert op.state/op_9 = {
+    phase: tools,
+    batch: { calls: [{ planned, resultEntryId: "e_52" }] }
+  }
+]
+```
+
+响应、用量和下一个状态**一起提交**。不存在"响应追加了但用量没记录"的状态。
+
+**步骤 5：工具放行**
+
+```text
+TX[
+  upsert op.tool_args/op_9:s1:0 = { command: "rm -rf src/old-migrations/" },
+  upsert op.state/op_9 = { phase: tools, call_0: effect_pending, replay: "never" }
+]
+```
+
+工具参数持久化。`replay: "never"` 表示这个工具不可安全重放——如果崩溃了，不能重新执行。
+
+**步骤 6：工具执行（不确定窗口）**
+
+`rm -rf` 正在删除文件...
+
+**步骤 7：工具结算**
+
+```text
+TX[
+  insert e_52 (tool result "deleted 5 files"),
+  upsert lane.leaf/main = e_52,
+  upsert op.state/op_9 = { phase: tools, call_0: completed }
+]
+```
+
+**步骤 8：继续循环**
+
+模型收到工具结果，决定调用 `npm test`...重复步骤 2-7。
+
+**步骤 9：终态**
+
+当模型最终返回纯文本（没有工具调用），且收件箱为空：
+
+```text
+TX[
+  delete op.meta/op_9,
+  delete op.state/op_9,
+  delete op.tool_args/op_9:s1:0,
+  upsert lane.lastResult/main = { outcome: "completed", leafId: e_55 },
+  upsert lane.state/main = { currentOperationId: null }
+]
+```
+
+操作的所有寄存器被删除。剩下的只有：对话条目、台账行、和 Lane 的四个寄存器。**没有死状态需要垃圾回收。**
+
+## 5. 崩溃恢复：核心机制
+
+### 5.1 恢复过程
+
+进程崩溃后重新打开，恢复一个 Lane：
+
+```text
+读取 1: lane.state/main  → { currentOperationId: "op_9" }
+读取 2: op.meta/op_9     → { intent: run, sourceLeafId: e_49 }
+读取 3: op.state/op_9    → { phase: assistant effect_pending, attempt: 1, ... }
+读取 4: lane.leaf/main   → "e_50"
+读取 5: lane.config/main → { model: {...}, ... }
+```
+
+五次点查找，O(1)。没有日志重放，没有树遍历，没有历史扫描。
+
+然后验证状态命名的所有实体：
+
+```text
+e_50 存在？  ✓（已放置的 prompt）
+e_51 存在？  ✗（保留的响应 id，尚未结算——预期的）
+u_7  存在？  ✗（保留的用量 id，尚未结算——预期的）
+```
+
+### 5.2 不确定窗口的恢复策略
+
+`op.state` 显示 `phase: assistant effect_pending`——我们提交了意图但可能没有收到响应。三种可能：
+
+1. 请求根本没发出去
+2. 请求发出去了但 provider 没处理
+3. Provider 处理了但响应没到达我们这里
+
+我们**不知道**是哪种。这就是"不确定窗口"。
+
+恢复策略：
+
+| 条件 | 动作 |
+|---|---|
+| `attempt 1 < maxAttempts 3` | 用**捕获的**配置开始 attempt 2（即使用户换了模型） |
+| `attempt >= maxAttempts` | 在保留 id e_51 下合成错误响应 |
+| `control = cancel_requested` | 在 e_51 下合成 aborted 响应，不重试 |
 
 :::danger
-**整个系统唯一的不确定区间是：意图持久，结算缺失。** 在这个窗口内崩溃，系统不知道副作用是否已经发生。
+关键：恢复使用**捕获的**配置，不是当前配置。如果用户在崩溃后换了模型，恢复仍然用崩溃前的模型重试。这保证了一致性。
 :::
 
-三条恢复策略覆盖这个窗口：
+### 5.3 工具崩溃的恢复
 
-| 恢复的状态 | 策略 |
-|---|---|
-| 助手生成 `effect_pending` | 捕获的重试策略允许则开始新尝试；否则在保留 id 下合成错误 |
-| 工具 `effect_pending` | 存储声明和当前声明都说 `safe` 才重新执行；否则合成 interrupted |
-| 延迟 `effect_pending` | running 控制等待应用 resume；cancelled 控制合成 aborted |
+如果崩溃发生在工具执行中（步骤 6）：
 
-## 5. 恢复：五次点查找
-
-崩溃后重新打开，恢复过程是：
-
-```
-lane.state/{lane} → currentOperationId
-op.meta/{opId}    → 操作元数据
-op.state/{opId}   → 程序计数器
-lane.leaf/{lane}  → 当前位置
-lane.config/{lane} → 配置
+```text
+op.state 显示 call_0: effect_pending, replay: "never"
+op.tool_args 显示 { command: "rm -rf src/old-migrations/" }
 ```
 
-:::note
-恢复是**五次寄存器点查找**加精确 id 解引用。没有日志重放，没有历史扫描，没有树遍历。这就是"写一次加寄存器"设计的回报。
-:::
+`replay: "never"` 告诉我们**不能重新执行这个命令**。文件可能已经删了。恢复动作：
 
-然后验证当前状态命名的所有实体：
-
-```ts
-// 条目：触发条目、最新助手、批次助手、已完成结果...
-// 寄存器：工具参数、结构准备、待处理载荷...
-// 全部存在且类型正确
+```text
+TX[
+  insert e_52 (synthetic result "interrupted: process crashed during execution"),
+  upsert lane.leaf/main = e_52,
+  upsert op.state/op_9 = { phase: tools, call_0: completed }
+]
 ```
 
-恢复**从不做的事**：
+合成一个错误结果，标记调用完成，继续处理下一个调用。对话保持连贯——每个工具调用都有结果。
 
-- 读寄存器历史（不存在历史）
-- 折叠任何东西
-- 扫描表
-- 构建 provider 上下文
-- 审计已完成的操作
+如果 `replay: "safe"`（比如 `ls` 命令），恢复会**重新执行**：
 
-## 6. Lane：并行工作的隔离单元
-
-Lane 是树上的命名游标，拥有：
-
-- **叶子**——新条目链接到它
-- **操作日志**——至多一个打开操作
-- **队列**——steer、followUp、nextRun
-- **配置**——模型、思考级别、活跃工具
-
-每个会话有 `main` Lane。应用可以创建更多：
-
+```text
+用持久化的参数重新执行工具
+用真实结果结算
 ```
-harness.createLane("slack:1719432.0021", at: currentLeafId)
+
+### 5.4 恢复从不做的事
+
+```text
+✗ 读寄存器历史（不存在历史）
+✗ 折叠任何东西
+✗ 扫描表
+✗ 构建 provider 上下文
+✗ 审计已完成的操作
+✗ 从缺失的内容推断状态
 ```
+
+恢复只做一件事：**读当前状态，执行恢复策略。**
+
+## 6. Lane：并行工作的隔离
+
+### 6.1 为什么需要 Lane
+
+想象一个 Slack 集成：一个频道是一个会话，每个线程是一个独立的对话。你不想让线程 A 的回复出现在线程 B 中。但你可能想让它们共享频道级别的历史。
+
+Lane 就是解决方案：
+
+```text
+树（共享）：  a ── b ── c ── d
+                    └── e ── f
+
+Lane main:         → d（主对话）
+Lane slack:123:    → f（线程对话，从 b 分叉）
+```
+
+两个 Lane 共享树的历史（a, b），但各自有独立的叶子（d vs f）、独立的操作状态、独立的队列。
+
+### 6.2 Lane 的规则
+
+1. **每 Lane 至多一个打开操作**——第二个操作收到 `LaneBusy`
+2. **Lane 之间无协调**——它们通过共享树间接交互
+3. **同一叶子上的两个 Lane**——下次追加时自然分叉
+4. **Lane 从不删除或重命名**——名称是永久的应用键
+
+### 6.3 Lane 变更线
+
+当两个并发调用竞争同一个 Lane 时（比如同时 `prompt()` 和 `abort()`），需要一个序列化机制：
+
+```text
+Lane 变更线 = 一个 FIFO 队列
+
+每个依赖状态的变更必须：
+1. 排队
+2. 验证（当前状态是否允许？）
+3. 至多一个原子提交
+4. 更新内存状态
+5. 下一个变更才能开始
+```
+
+结果：每对竞争调用恰好有**两种**可能的历史（A 先或 B 先），不存在第三种交错。
 
 :::tip
-Lane 的概念类似 git 分支：名字附加到位置，由新工作推进，可以移动到任何条目。但 Lane 可以移到**任何**条目（不只是向前）。
+这是可测试性的关键。如果你知道只有两种可能结果，你只需要测试两种顺序。
 :::
 
-两个 Lane 可以在同一叶子分叉，各自独立工作，互不干扰。它们共享树的历史但拥有独立的操作状态。
+## 7. 队列：管理输入流
 
-## 7. 队列与输入
+### 7.1 三种队列
 
-三种输入机制，中止行为不同：
-
-| 机制 | 用途 | 中止时 |
+| 队列 | 何时消费 | 中止时 |
 |---|---|---|
-| `steer` | 纠正当前运行 | 载荷返回给调用者，条目不追加 |
-| `followUp` | 运行结束后追加工作 | 同上 |
-| `nextRun` | 播种下一次运行 | **存活**——下次运行接受时消费 |
+| `steer` | 下一个检查点（回合之间） | 载荷返回给调用者 |
+| `followUp` | steering 耗尽后 | 载荷返回给调用者 |
+| `nextRun` | 下一次 `prompt()` 接受时 | **存活** |
 
-所有输入在接受时持久化到 `pending.entry` 寄存器。树条目在**消费时**写入——模型第一次看到它的位置。崩溃后恢复从记录重建。
+### 7.2 入队流程
 
-### 检查点过程
+当用户调用 `steer("换个方向")`：
 
-回合之间，Lane 经过检查点：
+```text
+TX[
+  upsert pending.entry/e_q1 = { type: "message", payload: "换个方向" },
+  upsert op.state/op_9 = { ... inbox.steer += "e_q1" ... }
+]
+```
 
-1. 应用延迟写入
-2. 消费 steering 消息
-3. 如果需要，压缩
-4. 开始下一个助手生成
-5. 消费 follow-up 消息
-6. 如果没有更多工作，完成
+注意：**树还没有被修改。** 内容存在 `pending.entry` 寄存器中。条目在检查点消费时才追加。
 
-:::note
-检查点的顺序很重要：steering 优先于生成，生成优先于 follow-up。`"one-at-a-time"` 模式每次只消费最旧的一项。
-:::
+为什么要延迟？因为如果在回合中途直接追加到树，provider 的 KV 缓存会失效（上下文在尾部之前插入了一个新条目）。
 
-## 8. 压缩与上下文管理
+### 7.3 消费流程
 
-### 追加式上下文不变量
+检查点时：
+
+```text
+TX[
+  insert e_q1 (user message "换个方向"),
+  delete pending.entry/e_q1,
+  upsert lane.leaf/main = e_q1,
+  upsert op.state/op_9 = { continuation: need_assistant(false), trigger: e_q1 }
+]
+```
+
+寄存器和条目的关系是**排他的**：在每个提交边界，恰好存在其一。从不同时存在，也从不都不存在。
+
+## 8. 压缩：管理上下文大小
+
+### 8.1 追加式上下文不变量
 
 > 在一个 Lane 的请求之间，provider 上下文只在尾部增长。
 
-这是为了保护 provider 的 KV 缓存。在尾部之前插入会使缓存失效并倍增成本。
+为什么？Provider（如 OpenAI、Anthropic）使用 KV 缓存加速重复前缀的处理。如果你在之前的请求尾部之前插入新内容，缓存从那个点开始失效，整个后续上下文需要重新处理。
 
-### 压缩的两种触发
+### 8.2 压缩的两种触发
 
-1. **阈值触发**——上下文超过阈值时，在检查点自动压缩
-2. **溢出触发**——provider 响应揭示请求不适合时，丢弃响应并压缩重试
+**阈值触发**：上下文超过 `reserveTokens` 时，在检查点自动压缩。
 
-溢出只允许恢复**一次**（`overflowRecoveryUsed` 标志）。第二次溢出直接失败。
-
-### 压缩条目的自包含性
-
-每个压缩条目存储：
-
-- `summary`——旧上下文的摘要
-- `retainedTail`——保留的最近消息（完整的，不是引用）
-
-上下文构建规则：**从叶子向根扫描，遇到压缩就停。** 压缩之后的内容 = summary + retainedTail + 压缩之后的新条目。更早的内容永远不读。
-
-## 9. 中止与关闭
-
-### 中止（Abort）
-
-中止不是阶段，是控制标志：
-
-1. 第一次 `abort()` 提交 `cancel_requested`，排空 steer/follow-up 队列
-2. 已在运行的副作用收到信号
-3. 对账：未解析工具调用得到合成结果
-
-:::danger
-中止**不是回滚**。已经发生的副作用保留。文件已删就是删了。
-:::
-
-信号所有权保证 `aborted` 无歧义：只有 Harness 能拉取 AbortSignal，所以 `aborted` 响应意味着用户确实中止了，而不是超时或网络错误。
-
-### 关闭（Close）
-
-关闭是**受控崩溃**：
-
-- 不写取消标记
-- 不写终态
-- 只拉信号停止进行中的副作用
-- 排空已接受的提交
-- 释放写者租约
-
-重新打开后发现 `effect_pending`，应用标准恢复策略。打开的操作保持可恢复。
-
-## 10. 存储后端
-
-三种后端，同一模型，同一一致性测试：
-
-| 后端 | 特点 | 适用场景 |
-|---|---|---|
-| Memory | 内存映射，无日志 | 测试、开发 |
-| JSONL | 每提交一行，重放构建状态 | 单机文件存储 |
-| SQLite | 每会话一个文件，事务性 | 生产单机 |
-
-### JSONL 的快照压缩
-
-JSONL 每次写入都追加一行。30 轮运行会留下约 10 条死掉的 `op.state` 行。快照压缩将文件重写为 `header + 活跃条目 + 活跃寄存器 + 台账`：
+**溢出触发**：Provider 返回的错误表明请求超过窗口时：
 
 ```text
-压缩前：~10 条事务行，~27 次写入
-压缩后：header + 4 条条目行 + 2 条用量行 + 4 条 Lane 寄存器行
+1. 响应以 stopReason "error" 提交（规范化）
+2. 构建压缩准备（从普通投影规则，排除 error 响应）
+3. 压缩执行
+4. 恢复 need_assistant(overflowRecoveryUsed: true)
+5. 用更小的上下文重试
 ```
 
-### SQLite 的写者租约
+**溢出只允许恢复一次。** 第二次溢出直接失败。这防止了无限压缩循环。
 
-SQLite 用 `writer_lease` 表强制单写者：
+### 8.3 压缩条目的自包含性
 
-```sql
-writer_lease(owner_id TEXT, fence INTEGER, expires_at_ms INTEGER);
+```ts
+interface CompactionEntry {
+  type: "compaction";
+  summary: string;               // 旧上下文的摘要
+  retainedTail: AgentMessage[];  // 保留的最近消息（完整副本）
+  tokensBefore: number;          // 压缩前的 token 数
+}
 ```
 
-过期所有者不能释放成功替代它的租约（fence 计数器保证）。
+上下文构建规则：
 
-:::caution
-每个 SQLite 事务必须以 `BEGIN IMMEDIATE` 打开。延迟 `BEGIN` 在并发写入时会以 `database is locked` 失败且无法恢复。
-:::
+```text
+从叶子向根扫描，遇到第一个压缩条目就停。
 
-## 11. 测试策略
+上下文 = summary + retainedTail + 压缩之后的新条目
+```
 
-三层测试，每层验证不同的声明：
+**永远不需要越过压缩读取更早的内容。** 这使压缩成为自包含的检查点，而不是指向历史的指针。
 
-### Tier A — 状态和恢复
+## 9. 中止：控制标志而非阶段
 
-对 Part 3 中的**每个状态**：持久构造它 → 关闭 → 重新打开 → 断言下一个动作正确。
+### 9.1 中止的语义
 
-关键规则：对每个恢复前缀，必须**关闭→重开→恢复→比较**。从初始前缀调用恢复两次不够。
+中止**不是回滚**。它是一个控制标志：
 
-### Tier B — 写者一致性
+```text
+第一次 abort():
+  TX[ S(control = cancel_requested, drainedSteer, drainedFollowUp) ]
+  → 拉取 AbortSignal
+  → 运行中的副作用收到信号
+  → 对账在后台运行
+```
 
-用插装存储装饰器（包装 `Storage.commit()` 的 spy）记录每个事务的精确写入顺序。对照规范断言。
+已完成的副作用保留。文件已删就是删了。
 
-捕获的回归类：副作用在意图之前开始、响应因某个停止原因被省略、分类在用量持久之前开始。
+### 9.2 信号所有权
 
-### Tier C — 确定性交错
+只有 Harness 能拉取 `AbortSignal`。Provider 实现必须当且仅当信号被拉取时才设置 `stopReason: "aborted"`。
 
-每个竞争的两种顺序，手动驱动测试。`drive: "manual"` 让 Harness 在每个副作用前停靠，测试逐个释放。
+这保证了一个不变量：
 
-## 12. 设计哲学总结
+> 如果一个响应的 stopReason 是 `aborted`，那么在它提交时 `control.status` 必须是 `cancel_requested`。
 
-:::tip
-AgentHarness v1 的核心洞察：**把易变的编排状态做成临时的，把持久的对话状态做成结构上无聊的。**
-:::
+超时、网络错误、provider 拒绝都以 `error` 结算，走普通重试路径。`aborted` 意味着用户确实中止了。
 
-- **编排状态**（`op.*` 寄存器）：构造上临时，操作结束就删除，允许在版本间变动
-- **对话状态**（entries）：写一次追加式，永远读兼容，结构极简
+## 10. 测试策略：为什么能确信它是正确的
 
-Schema 演化的难度恰好等于无聊部分的难度——这是最好的可用结果。
+### Tier A：状态和恢复
 
-## 13. 关键设计决策回顾
+对状态机中的**每个状态**：
 
-| 决策 | 选择 | 为什么 |
+```text
+1. 持久构造该状态
+2. 关闭进程
+3. 重新打开
+4. 断言恢复后的下一个动作正确
+```
+
+关键规则：对每个恢复前缀，必须**关闭→重开→恢复→比较**。从初始前缀调用恢复两次不够，因为第二次恢复可能面对第一次恢复修改过的状态。
+
+### Tier B：写者一致性
+
+用插装存储装饰器记录每个事务的精确写入顺序：
+
+```ts
+class SpyStorage implements Storage {
+  commits: Transaction[] = [];
+  async commit(tx: Transaction) {
+    this.commits.push(deepCopy(tx));
+    return realStorage.commit(tx);
+  }
+}
+```
+
+然后断言：`commits[0]` 恰好是接受事务、`commits[1]` 恰好是意图事务...
+
+这捕获的回归类：副作用在意图之前开始、响应因某个停止原因被省略、分类在用量持久之前开始。
+
+### Tier C：确定性交错
+
+`drive: "manual"` 模式让 Harness 在每个副作用前停靠：
+
+```ts
+const harness = await AgentHarness.create({ drive: "manual", ... });
+harness.prompt("do something");
+
+// Harness 停靠在第一个副作用前
+const action = await harness.peekAction();
+
+await harness.executeAction();  // 释放一个副作用
+```
+
+在每两个副作用之间，你可以：
+
+- 注入输入（steer、abort）
+- 关闭进程（模拟崩溃）
+- 重新打开并恢复
+
+每个竞争的两种顺序都必须测试。
+
+## 11. 设计决策回顾
+
+| 决策 | 选择 | 替代方案 | 为什么选这个 |
+|---|---|---|---|
+| 恢复方式 | 读寄存器 | 重放日志 | O(1) 恢复，无归约器 bug |
+| 崩溃状态 | 只在事务之间 | 任意点 | 可枚举，可穷举测试 |
+| 清理方式 | 删除寄存器 | 垃圾回收 | 简单，无泄漏 |
+| 并发控制 | Lane 变更线 | 分布式锁 | 单进程内足够，可测试 |
+| 上下文管理 | 追加式 + 压缩 | 每次重建 | 保护 KV 缓存 |
+| 中止语义 | 控制标志 | 两阶段回滚 | 外部副作用不可回滚 |
+| 信号所有权 | Harness 独占 | 调用者提供 | `aborted` 无歧义 |
+| 溢出恢复 | 一次机会 | 无限重试 | 防止压缩循环 |
+| 工具重放 | 显式声明 | 自动判断 | 只有工具作者知道是否安全 |
+| 成本记录 | 独立于编排 | 只记成功的 | 计费是事实 |
+
+## 12. 什么时候不该用这个设计
+
+AgentHarness v1 为**长时间运行的、有副作用的 Agent** 设计。如果你的场景不同，可能不需要这么重的机制：
+
+| 场景 | 是否需要 | 原因 |
 |---|---|---|
-| 恢复方式 | 读寄存器 | 不需要日志重放或归约器 |
-| 崩溃状态 | 只在事务之间 | 可枚举，可测试 |
-| 清理方式 | 删除寄存器 | 不需要垃圾回收 |
-| 并发控制 | Lane 变更线 | 每个竞争恰好两种历史 |
-| 上下文管理 | 追加式 + 压缩 | 保护 KV 缓存 |
-| 中止语义 | 控制标志 | 不回滚已发生的副作用 |
-| 信号所有权 | Harness 独占 | `aborted` 无歧义 |
-| 测试策略 | 三层 | 状态、写者、竞争分别验证 |
+| 聊天机器人（无工具） | 不需要 | 没有副作用，崩溃只丢失一条回复 |
+| 代码执行 Agent | 需要 | 文件系统副作用不可回滚 |
+| API 调用 Agent | 需要 | 网络请求可能已执行但结果未收到 |
+| 纯推理/分析 | 不需要 | 无副作用，可以重新运行 |
+| 多租户服务 | 需要，但需额外工作 | 需要处理租户隔离和并发 |
+
+:::note
+这个设计的代价是复杂度。如果你只是构建一个简单的聊天应用，直接把消息存在数据库里就够了。AgentHarness 的价值在于**有副作用的、长时间运行的、必须崩溃安全的** Agent 场景。
+:::
