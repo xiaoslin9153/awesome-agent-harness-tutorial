@@ -1146,3 +1146,173 @@ interface SessionSnapshot {
 - 直接消息和终结的工具结果使用相同的立即生命周期并只在条目提交时进入 `transcript`。
 - `aborting` 快照只报告实际存在的状态。
 - 重新连接意味着新的 `watch()`。
+
+## 10. 事件
+
+一个扁平流。`events.on(type, listener)` 接收一切；Lane 观察者接收其 Lane 的事件（第 9 节）。
+
+保证：
+
+- **被动。** 抛出异常的监听器被捕获并报告为 `handler_error` 事件加遥测；它从不影响执行。
+- **有序。** 交付遵循进程顺序，对观察者和 `events.on` 相同。并发 Lane 不保证 `seq` 有序的被动交付；持久消费者使用 `getLog()`。
+- **不持久化，不重放。** 重新连接意味着新的 `watch()`。
+- 报告持久事实的事件在事实提交后触发；事件宣布的内容已经可查询。
+- 事件报告钩子转换后的最终值。
+- 载荷是 JSON 可序列化且无秘密的；服务器可以原样代理它们。活跃对象（模型、工具）通过名称引用，从不嵌入。
+- Lane 范围的事件携带 `lane: string`（下文省略）；harness 全局事件省略它——除了 `usage`，它全局交付并在载荷中携带记录的 Lane。操作范围的事件携带 `runId`；回合范围的事件携带 `turnId`；恢复的工作携带 `recovery: true`。
+
+### 目录
+
+```ts
+// 运行生命周期
+{ type: "run_start";   runId }
+{ type: "run_resume";  runId }
+{ type: "run_suspend"; runId; deferred: DeferredHandle }
+{ type: "run_abort";   runId; steer: AgentMessage[]; followUp: AgentMessage[] }
+{ type: "run_end";     runId; outcome: "completed" | "aborted" | "failed";
+                       leafId; finalEntryId?; finalMessage?; error? }
+{ type: "fault";       code; message }
+{ type: "handler_error"; error; stack? } & ({ kind: "hook"; hook } | { kind: "event"; event })
+
+// 步骤和重试
+{ type: "turn_start"; runId; turnId }
+{ type: "turn_end";   runId; turnId; message; toolResults }
+{ type: "retry_scheduled"; runId; step; attempt; maxAttempts; delayMs; errorMessage }
+{ type: "retry_start";     runId; step; attempt }
+{ type: "retry_end";       runId; step; attempt; success; finalError? }
+
+// 消息
+{ type: "message_start";  runId?; message }
+{ type: "message_update"; runId; message; event }
+{ type: "message_end";    runId?; message; entryId: string }
+
+// 工具
+{ type: "tool_start";  runId; turnId; toolCallId; toolName; args }
+{ type: "tool_update"; runId; turnId; toolCallId; toolName; partialResult }
+{ type: "tool_end";    runId; turnId; toolCallId; toolName; result; isError; terminate }
+
+// 树、队列、事实
+{ type: "entry_added";   entry }
+{ type: "write_pending"; runId; entryId; entry }
+{ type: "queue_update";  steer; followUp; nextRun }
+{ type: "fact_update" } & (
+  | { fact: "name";  name }
+  | { fact: "label"; targetId; label })
+
+// 配置
+{ type: "config_update" } & (
+  | { property: "model"; value; previous }
+  | { property: "thinkingLevel"; value; previous }
+  | { property: "activeTools"; value; previous }
+  | { property: "tools" | "resources" | "streamOptions" | "retryPolicy"
+              | "compactionSettings" | "steeringMode" | "followUpMode" })
+
+// 结构操作
+{ type: "compaction_start"; runId; reason }
+{ type: "compaction_end";   runId; reason; outcome; entry?; fromHook; error? }
+{ type: "navigation_start"; runId; targetId }
+{ type: "navigation_end";   runId; outcome; oldLeafId; newLeafId; summaryEntry?; error? }
+
+// Lane
+{ type: "lane_created"; at }
+
+// 成本。全局交付——每个观察者都收到——载荷中携带记录的 Lane。
+{ type: "usage"; lane: string; record: UsageRecord; totals: Usage }
+```
+
+### 嵌套
+
+```text
+run_start
+  turn_start
+    message_start / message_update* / message_end     助手已提交
+    tool_start / tool_update* / tool_end              每次调用
+    message_end                                       工具结果，源顺序
+  turn_end
+  compaction_start ... compaction_end                 自动，在检查点
+  turn_start ... turn_end                             直到没有待处理
+run_end
+```
+
+UI 的忙碌指示器跨 `run_start`..`run_end`，以及独立操作的 `compaction_start`/`navigation_start` 括号。恢复的结构操作重新发出其开始事件（`recovery: true`）使括号始终平衡。
+
+失败尝试发出 `retry_scheduled`，然后 `retry_start`，然后重试解决时 `retry_end`。`run_suspend` 结束停靠 Lane 的事件流；下一个 `run_resume` 继续它。
+
+## 11. 钩子
+
+钩子是被等待的拦截点。注册是 harness 全局的。
+
+```ts
+interface HookMap {
+  before_run: {
+    event: { prompt; systemPrompt; resources };
+    result: { messages?; systemPrompt?; resumeData? } | undefined;
+  };
+  before_resume: {
+    event: { kind; lane; runId; prompt?; customInstructions?; resumeData? };
+    result: void;
+  };
+  before_run_end: {
+    event: { runId; messages };
+    result: { followUp? } | undefined;
+  };
+  transform_context: {
+    event: { messages };
+    result: { messages } | undefined;
+  };
+  before_request: {
+    event: { model; step; attempt; streamOptions };
+    result: { streamOptions? } | undefined;
+  };
+  before_payload: {
+    event: { model; payload };
+    result: { payload } | undefined;
+  };
+  after_response: {
+    event: { status?; headers?; message };
+    result: { message? } | undefined;
+  };
+  before_tool: {
+    event: { toolCallId; toolName; args };
+    result: { args?; block?: { reason; terminate? } } | undefined;
+  };
+  after_tool: {
+    event: { toolCallId; toolName; args; content; isError; usage? };
+    result: { content?; isError?; usage?; terminate? } | undefined;
+  };
+  before_compaction: {
+    event: { reason; preparation; customInstructions? };
+    result: { decline?; compaction? } | undefined;
+  };
+  before_navigation: {
+    event: { targetId; preparation; customInstructions? };
+    result: { decline?; summary? } | undefined;
+  };
+}
+
+interface Hooks {
+  on<K extends HookName>(name: K, handler: HookHandler<K>,
+                         options?: { id?: string }): () => void;
+}
+```
+
+统一语义：
+
+- `before_run` 和 `before_resume` 需要一个稳定的 `id`，在每个钩子名称内唯一。
+- 处理器按注册顺序运行，每个看到先前的输出。
+- 抛出发出 `handler_error`，跳过该处理器，让其余继续。**`before_tool` 改为失败关闭并阻止工具。**
+- 持久钩子输出在执行继续之前提交。仅返回不是持久的。
+- 事件暴露钩子后的值。
+
+### 重放表
+
+| 钩子 | 新鲜 | 重试 | 恢复 |
+|---|---|---|---|
+| `before_run` | 一次 | 否 | 否（持久化在意图中） |
+| `before_resume` | 否 | 否 | 是，幂等 |
+| `transform_context`、`before_request`、`before_payload` | 每请求 | 是 | 是 |
+| `after_response` | 每响应 | 每响应 | 每响应 |
+| `before_tool` | 每调用 | — | `tool_started` 存在时不运行 |
+| `after_tool` | 每个已执行结果 | — | 只在安全重放时 |
+| `before_compaction`、`before_navigation` | 每操作 | 否 | 结果条目或任何 `step_attempt` 存在时不运行 |
+| `before_run_end` | 每正常完成边界 | — | 恢复到达的边界（可能重复）；中止、终端失败或自动压缩耗尽从不 |
