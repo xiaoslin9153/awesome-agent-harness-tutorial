@@ -945,3 +945,204 @@ class MissingIdentities extends TaggedError("MissingIdentities")<{
 | `UnknownSkill` | `name` |
 | `UnknownTemplate` | `name` |
 | `UnknownTarget` | `targetId` |
+| `UnknownQueueItem` | `lane`、`entryId` |
+| `LaneExists` | `lane` |
+| `InvalidLane` | `lane`、`reason` |
+| `NothingToCompact` | `lane` |
+| `Closed` | 无 |
+
+传输层将错误序列化为 `{ _tag, message, ...payload }` 并在代理边界重建类。添加一个拒绝类会更改相应的错误联合。穷举的 `matchError` 调用在调用者处理新 tag 之前无法通过类型检查。
+
+`Err` 意味着调用没有创建或接受请求的工作。Harness 保持打开和可写时，每个已接受的操作以 `Ok` 解析，包括 `aborted`、`failed` 和 `suspended`：
+
+```ts
+interface OperationError {
+  code: string;
+  message: string;
+}
+
+type RunOutcome =
+  | { kind: "completed"; leafId: string; finalEntryId: string; finalMessage: AssistantMessage }
+  | { kind: "aborted";   leafId: string; finalEntryId: string; finalMessage: AssistantMessage }
+  | { kind: "failed";    leafId: string; error: OperationError;
+                          finalEntryId?: string; finalMessage?: AssistantMessage }
+  | { kind: "suspended"; leafId: string; finalEntryId: string; deferred: DeferredHandle };
+
+type CompactionOutcome =
+  | { kind: "completed"; leafId: string; entry: CompactionEntry }
+  | { kind: "declined";  leafId: string }
+  | { kind: "aborted";   leafId: string }
+  | { kind: "failed";    leafId: string; error: OperationError };
+
+type NavigationOutcome =
+  | { kind: "completed"; newLeafId: string | null; summaryEntry?: BranchSummaryEntry }
+  | { kind: "declined";  leafId: string | null }
+  | { kind: "aborted";   leafId: string | null }
+  | { kind: "failed";    leafId: string | null; error: OperationError };
+
+type RunRejected = LaneBusy | InvalidMessage | UnknownSkill | UnknownTemplate | Closed;
+type CompactionRejected = LaneBusy | NothingToCompact | Closed;
+type NavigationRejected = LaneBusy | UnknownTarget | Closed;
+type ResumeRejected = LaneBusy | NothingToResume | MissingIdentities | Closed;
+type QueueRejected = NoActiveRun | InvalidMessage | Closed;
+type CancelQueuedRejected = UnknownQueueItem | Closed;
+type AbortRejected = NoActiveOperation | Closed;
+
+type RunResult = Result<{ runId: string } & RunOutcome, RunRejected>;
+type CompactionResult = Result<{ runId: string } & CompactionOutcome, CompactionRejected>;
+type NavigationResult = Result<{ runId: string } & NavigationOutcome, NavigationRejected>;
+type QueueResult = Result<{ entryId: string }, QueueRejected>;
+type CancelQueuedResult = Result<{
+  outcome: "cancelled" | "already_consumed" | "already_cleared";
+}, CancelQueuedRejected>;
+type RecordUsageResult = Result<void, Closed>;
+type AbortResult = Result<{
+  runId: string;
+  steer: AgentMessage[];
+  followUp: AgentMessage[];
+}, AbortRejected>;
+
+type ResumeOutcome =
+  | ({ operation: "run"; runId: string } & RunOutcome)
+  | ({ operation: "compaction"; runId: string } & CompactionOutcome)
+  | ({ operation: "navigation"; runId: string } & NavigationOutcome);
+
+type ResumeResult = Result<ResumeOutcome, ResumeRejected>;
+
+type CreateLaneResult = Result<AgentLane, LaneExists | InvalidLane | UnknownTarget | Closed>;
+```
+
+`cancelQueued` 的结果镜像变更线历史：`cancelled` 意味着条目将从不被追加；`already_consumed` 意味着条目存在（模型已看到或将看到）；`already_cleared` 意味着中止排空了该项或更早的取消获胜。
+
+存储写入失败不是 `Err`。它使 harness 故障并以 `HarnessFault` 拒绝 promise：
+
+```ts
+class HarnessFault extends Error {
+  readonly cause: unknown;
+
+  constructor(message: string, cause: unknown) {
+    super(message);
+    this.name = "HarnessFault";
+    this.cause = cause;
+  }
+}
+
+class HarnessClosed extends Error {
+  constructor() {
+    super("AgentHarness was closed while the operation was active");
+    this.name = "HarnessClosed";
+  }
+}
+```
+
+故障 harness 上的调用以相同的 `HarnessFault` 实例拒绝，直到会话重新打开。`close()` 以 `HarnessClosed` 拒绝已接受操作的进程本地 promise；它们的持久操作保持打开且可恢复。`close()` 之后返回 `Result` 的调用返回 `Err(new Closed(...))`；其他调用以 `HarnessClosed` 拒绝。不变量违反也拒绝。因此 promise 拒绝意味着缺陷或已死的 harness，不是预期的操作结果。这些错误不属于公共 `Result` 错误联合。
+
+`finalMessage` 是运行中投影为助手消息的最新条目；`finalEntryId` 是该条目的 id。`leafId` 是操作完成时 Lane 的叶子——分支查询的无竞争锚点。当最终助手消息之后应用了延迟写入时两者不同。完整 transcript 不复制到结果中；它们在会话中并已作为事件交付。
+
+**类型出处。** 核心会话和工具类型（`AgentMessage`、`AgentTool`、`AgentToolResult`、`QueueMode`、`ThinkingLevel`）来自 `packages/agent/src/types.ts`。Provider 类型来自 `packages/ai`。通用遥测契约来自 `packages/telemetry`。会话、harness、钩子、事件、结果、快照、导航和持久记录类型定义在 `packages/agent/src/harness/` 下。
+
+### 挂起的操作
+
+```ts
+interface SuspendedOperation {
+  lane: string;
+  kind: "run" | "compaction" | "navigation";
+  id: string;
+  startedAt: number;                             // Unix 毫秒
+  reason: "crash" | "deferred";
+  prompt?: AgentMessage[];                       // runs：规范化原始 prompt
+  deferred?: DeferredHandle;                     // reason "deferred"
+  aborting?: { steer: AgentMessage[]; followUp: AgentMessage[] };
+  missing: { tools: string[]; models: string[] };
+}
+```
+
+### 示例
+
+```ts
+// 交互式 pi。suspended 有 0 或 1 个条目，总是 "main"。
+const { harness, suspended } = await AgentHarness.create({ session, models, model });
+for (const s of suspended) await (await harness.lane(s.lane))!.resume();
+await harness.prompt("fix the bug");
+await harness.steer("focus on the tests");
+await harness.setModel(opus);
+
+// Slack bot。频道 = 会话 + main；线程 = Lane。
+const key = `slack:${threadTs}`;
+let thread = await harness.lane(key);
+if (!thread) {
+  const created = await harness.createLane(key, pingedEntryId);
+  if (!created.ok) return handleLaneError(created.error);
+  thread = created.value;
+}
+await thread.prompt("summarize this thread");
+await thread.setModel(haiku);
+await thread.session.appendMessage(msg);
+
+// 线程渲染器：仅此 Lane。
+const { snapshot, start } = await thread.watch();
+render(snapshot.transcript);
+start((event) => update(event));
+
+// 延迟运行（批量计价）。
+const result = await thread.prompt("analyze this mailbox");
+if (result.ok && result.value.kind === "suspended") schedulePoll(thread);
+
+// 仪表板。
+const s = await harness.watchSession();
+for (const lane of s.snapshot.lanes) {
+  if (lane.operation?.status === "suspended") await (await harness.lane(lane.name))!.resume();
+}
+```
+
+## 9. 快照与订阅
+
+UI 需要当前状态加上之后的每个变更，没有间隙。这包括传输间隙：代理 harness 的服务器必须在任何事件到达线上之前向其客户端交付快照。`watch()` 在消费者启用交付之前缓冲：
+
+```ts
+const { snapshot, start, unsubscribe } = await lane.watch();
+await send(client, { kind: "snapshot", snapshot });   // 快照先上线
+start((event) => send(client, event));                // 按顺序刷新缓冲区，然后实时
+```
+
+`watch()` 原子快照并开始缓冲。`start(listener)` 按顺序刷新，然后实时交付；每个事件到达一次，按顺序，没有序列号或注册竞争。`unsubscribe()` 丢弃观察者及其缓冲区。
+
+```ts
+interface QueuedItem { entryId: string; message: AgentMessage }
+
+interface LaneSnapshot {
+  lane: string;
+  transcript: Entry[];       // 此 Lane 的上下文窗口加其压缩条目
+  leafId: string | null;
+
+  operation: null | {
+    id: string;
+    kind: "run" | "compaction" | "navigation";
+    status: "running" | "suspended" | "aborting";
+    startedAt: number;
+    suspended?: SuspendedOperation;
+    streamingMessage?: AssistantMessage;     // message_start 直到条目提交
+    runningTools: { toolCallId: string; toolName: string; args: unknown;
+                    partialResult?: AgentToolResult<unknown> }[];
+    retry?: { attempt: number; maxAttempts: number; nextAttemptAt: number };
+  };
+
+  queues: { steer: QueuedItem[]; followUp: QueuedItem[]; nextRun: QueuedItem[] };
+  pendingWrites: { entryId: string; type: EntryType; customType?: string;
+                   message?: AgentMessage; data?: JsonValue }[];
+  faulted: boolean;
+}
+
+interface SessionSnapshot {
+  lanes: (LaneInfo & { suspended?: SuspendedOperation })[];
+  faulted: boolean;
+}
+```
+
+规则：
+
+- 配置**不在**快照中。Getter 返回当前值；`config_update` 事件告诉 UI 何时重新读取。
+- `streamingMessage` 不是 `transcript` 的一部分。`entry_added` 确认追加并清除草稿。
+- 直接消息和终结的工具结果使用相同的立即生命周期并只在条目提交时进入 `transcript`。
+- `aborting` 快照只报告实际存在的状态。
+- 重新连接意味着新的 `watch()`。
