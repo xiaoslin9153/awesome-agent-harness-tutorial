@@ -1462,3 +1462,422 @@ TX[ delete op.meta/op_9,
 **观察契约。** 终端结果通过活跃调用者的 promise（和对应的 `run_end`/`compaction_end`/`navigation_end` 事件）观察一次，它携带完整的内存结果；之后通过 `lane.lastResult` 观察，直到同一 Lane 上的下一个终态事务覆盖它。`lane.lastResult` 只由终态事务写入 — 每个 Lane 一个有界寄存器，永远。恢复从不读取它：恢复将 `currentOperationId: null` 的 Lane 视为空闲，不管寄存器的内容。它的存在是为了让接受了一个操作、丢失了进程并重新打开的应用仍然可以回答"`op_9` 发生了什么？" — 包括树单独无法重建的结果：结构失败的错误、`declined`，以及叶子移动的 `aborted` 与 `completed` 歧义。
 
 本节携带的不变量（Part 9 中重述）：`op.*` 寄存器和操作拥有的 `pending.entry` 寄存器存在**当且仅当**其操作打开，因为终态事务在清除 `currentOperationId` 的同时原子删除它们。不存在需要观察或修复的部分清理状态。
+
+---
+
+# Part 4 — 执行、恢复、中止、关闭
+
+## 4.1 解释器
+
+运行时从完整持久状态加一个小型进程本地调度器进行规划。状态命名的条目和稳定寄存器值在规划前批量加载。驱动还将当前设置修订快照到 `RuntimeSnapshot` 中；这不执行 provider 请求。Provider 和工具在**分发时**从其注册表中按状态捕获的持久身份解析 — 缺失或被替换的条目带内失败该分发（合成错误结算），与未知工具完全一样。当工具批次首次变为当前时，驱动解析一次 `toolContext` 并将其保留在 `DriveState.toolBatches` 中供该批次中的每个顺序/并行调用使用。`nextAction` 然后在这些输入上是纯函数。
+
+```ts
+interface CurrentOperation {
+  operation: Operation;
+  state: OperationState;
+  /** 加载时的寄存器 seq；条件提交比较这些 (§3.4)。 */
+  operationStateSeq: number;
+  laneState: LaneState;
+  laneStateSeq: number;
+  leafId: string | null;
+  configuration: LaneConfiguration;
+  configurationSeq: number;
+}
+
+type EffectKey = string; // 从持久步骤/尝试或 assistant/sourceIndex 确定性派生
+
+interface LiveEffect { plan: EffectPlan; promise: Promise<EffectOutput> }
+
+interface DriveState {
+  deferredPollsRemaining: 0 | 1;
+  running: Map<EffectKey, LiveEffect>;
+  /** 每个活跃或恢复批次的一个上下文/工具定义快照。 */
+  /** toolContext 每批次解析一次；键：assistantEntryId。 */
+  toolBatches: Map<string, unknown>;
+  /** 进程本地尽力尝试；重新打开可能再次尝试。 */
+  deferredCancellations: Set<string>;
+}
+
+type EffectPlan = { telemetryContext: TelemetryContext } & (
+  | { kind: "assistant"; key: EffectKey;
+      generation: Extract<Generation, { status: "effect_pending" }>;
+      streamOptions: AgentHarnessStreamOptions }
+  | { kind: "summary"; key: EffectKey;
+      generation: Extract<SummaryGeneration, { status: "effect_pending" }> }
+  | { kind: "tool"; key: EffectKey; assistantEntryId: string;
+      sourceIndex: number;
+      /** 完整 op.tool_args 寄存器键：{opId}:{stepId}:{sourceIndex} (§3.8)。 */
+      argsKey: string }
+  | { kind: "deferred"; key: EffectKey;
+      deferred: Extract<Deferred, { status: "effect_pending" }>;
+      streamOptions: AgentHarnessStreamOptions }
+  | { kind: "cancel_deferred"; key: EffectKey; sourceEntryId: string;
+      handle: DeferredHandle }
+  | { kind: "hook"; key: EffectKey; name: keyof HookMap; event: unknown }
+);
+
+type SummaryAttemptOutcome =
+  | { kind: "success"; result: CompactResult | BranchSummaryResult }
+  | { kind: "retry" | "failure"; error: OperationError };
+
+type EffectOutput =
+  | { kind: "not_started"; key: EffectKey }
+  | { kind: "assistant" | "deferred"; key: EffectKey;
+      message: SettledAssistantMessage }
+  | { kind: "summary"; key: EffectKey; outcome: SummaryAttemptOutcome }
+  | { kind: "tool_raw"; key: EffectKey;
+      result: AgentToolResult<unknown>; isError: boolean }
+  | { kind: "hook"; key: EffectKey; result: unknown }
+  | { kind: "cancel_deferred"; key: EffectKey };
+
+type SettlementOutput = Exclude<EffectOutput, { kind: "tool_raw" }> |
+  { kind: "tool"; key: EffectKey; result: AgentToolResult<unknown>;
+    isError: boolean; terminate: boolean };
+
+interface SettlementResult {
+  current: CurrentOperation;
+  /** 成功的前置意图钩子准备的立即活跃分发。 */
+  dispatch?: EffectPlan;
+  /** 持久状态仍可安全分发时身份解析失败。 */
+  suspend?: OperationResult;
+  /** 轮询意图已提交；消耗此恢复调用的唯一许可。 */
+  consumeDeferredPoll?: true;
+}
+
+interface RuntimeSnapshot {
+  settingsRevision: number;
+  streamOptions: AgentHarnessStreamOptions;
+  retryPolicy: NormalizedRetryPolicy;
+}
+
+type PlannerInputs = {
+  /** 精确的进程本地计划；从持久 id 重建活跃计划。 */
+  running: ReadonlyMap<EffectKey, EffectPlan>;
+  deferredPollsRemaining: 0 | 1;
+  deferredCancellations: ReadonlySet<string>;
+  /** 条目加上已加载的 op.tool_args/op.preparation/pending.entry 寄存器
+      值 — 每键写入一次或消费前稳定，所以作为不可变规划器输入是安全的。
+      以条目 id 或寄存器键为键。 */
+  loaded: ReadonlyMap<string, Entry | Register>;
+  runtime: RuntimeSnapshot;
+  context?: AgentMessage[];
+  now: number;
+};
+
+type OperationResult = RunOutcome | CompactionOutcome | NavigationOutcome;
+
+type Action =
+  | { kind: "transition"; next: OperationState; telemetryContext: TelemetryContext;
+      /** 此转换快照当前可变请求状态时必需。 */
+      expectedConfigurationSeq?: number;
+      expectedSettingsRevision?: number }
+  | { kind: "dispatch"; intent?: OperationState; effect: EffectPlan;
+      consumeDeferredPoll?: true }
+  | { kind: "await_effect"; key: EffectKey }
+  | { kind: "wait"; until: number; telemetryContext: TelemetryContext }
+  | { kind: "suspend"; result: OperationResult }
+  | { kind: "finish"; result: OperationResult };
+```
+
+解释器主循环（简化）：
+
+```ts
+while (true) {
+  const action = nextAction(plannerInputs());
+  switch (action.kind) {
+    case "transition":
+      current = await fx.commitTransition(current, action.next,
+        action.telemetryContext, action.expectedConfigurationSeq,
+        action.expectedSettingsRevision);
+      if (!current) return; // 外部终结
+      break;
+
+    case "dispatch": {
+      if (action.intent) {
+        current = await fx.commitTransition(current, action.intent,
+          action.telemetryContext, action.expectedConfigurationSeq,
+          action.expectedSettingsRevision);
+        if (!current) return;
+      }
+      const liveEffect = { plan: action.effect, promise: fx.run(action.effect) };
+      live.running.set(action.effect.key, liveEffect);
+      break;
+    }
+
+    case "await_effect": {
+      const liveEffect = live.running.get(action.key)!;
+      const { plan } = liveEffect;
+      const output = await liveEffect.promise;
+      live.running.delete(action.key);
+      if (plan.kind === "cancel_deferred") {
+        current = await reloadCurrent(current.operation.operationId); // 无持久写入
+        break;
+      }
+      let settlement: SettlementOutput;
+      if (output.kind === "tool_raw") {
+        if (plan.kind !== "tool") throw new Error("tool output/plan mismatch");
+        settlement = await fx.finalizeTool(plan, output); // 源顺序的 after_tool
+      } else {
+        settlement = output; // not_started 无钩子地合成结算
+      }
+      const settled = await commitEffectSettlement(
+        current, plan, settlement, plan.telemetryContext);
+      current = settled.current;
+      if (settled.suspend) return settled.suspend;
+      if (settled.consumeDeferredPoll) live.deferredPollsRemaining = 0;
+      if (settled.dispatch)
+        live.running.set(settled.dispatch.key,
+          { plan: settled.dispatch, promise: fx.run(settled.dispatch) });
+      break;
+    }
+
+    case "wait":
+      await fx.sleep(
+        Math.max(0, action.until - Date.now()), action.telemetryContext);
+      current = await reloadCurrent(current.operation.operationId);
+      break;
+
+    case "finish":
+      current = await fx.commitTerminal(current, action.result) ?? current;
+      return action.result;
+
+    case "suspend":
+      return action.result;
+  }
+}
+```
+
+意图/普通转换要求 `op.state` 寄存器仍携带其预期的 `operationStateSeq`；否则返回 `undefined`，循环重新规划而不分发。如果条件提交或 `reloadCurrent` 发现操作的寄存器消失 — 它不再是 Lane 的当前操作 — 驱动通过外部终结停止（§4.9）。成功的 `before_request`/`before_tool` 钩子结算原子提交副作用意图（和有效 `op.tool_args` 寄存器）并返回完整的进程本地分发计划；驱动立即安装该 promise。剩余仅进程间隙中的崩溃保守地是普通未知副作用情况。创建 generation/summary `ready` 状态的转换还提供它读取的 `lane.config` 寄存器 seq 和 harness 设置修订；设置/Lane 提交要求两者仍然匹配，给出设置器优先或步骤开始优先排序。产生的上下文持久捕获内联配置、规范化重试策略和基准流选项。在普通外部执行之前，`fx.run` 再一次进入 Lane 变更线：取消优先返回 `not_started`，而开始优先注册活跃副作用/控制器使后来的中止可以信号它。分发按捕获的持久身份从注册表解析 provider 或工具；解析失败带内结算。因此没有副作用在意图之后的间隙中开始而不属于两个序列化顺序之一。结算重载最新的完整状态，验证同一副作用键仍待处理，将输出合并到该状态，并应用当前取消控制。因此 steer/write 接受、中止和其他并行工具意图不能擦除活跃结果或覆盖更新的收件箱/控制状态。
+
+并行工具调用按源顺序将阶段二分发到 `DriveState.running`。规划器可以在较早的 promise 运行时分发后面的调用，但它只为第一个未完成的源位置发出 `await_effect`。该原始结果然后经过源顺序的 `fx.finalizeTool`/`after_tool` 再结算。后来结算的原始 promise 保持进程本地直到轮到它。重启后 `running` 为空，所以持久 `effect_pending` 遵循恢复策略而不是被误认为活跃副作用。
+
+恢复规则：
+
+- cancelled 控制下的 `not_started` 将助手/获取在保留 id 下结算为 `aborted`，用计划的 aborted 结果结算工具而不 `after_tool`，丢弃未提交的钩子决策，在完成 aborted 之前丢弃结构工作，丢弃过期的延迟取消动作而不结算；
+- ready generation/summary 和已清除工具在 `dispatch` 之前提交 `effect_pending`；
+- 恢复的没有活跃键的 generation/summary pending 在捕获的重试策略下推进或在上限处合成结算；
+- 恢复的工具只在持久化和当前声明都是 `safe` 时重放，否则结算为 interrupted；
+- 恢复的 deferred pending 正常挂起直到应用的 `resume()` 用一个新鲜轮询意图替换它；cancelled 控制改为在完成前将现有保留的响应/用量 id 合成结算为 `aborted`；
+- 通过其 `before_request` 结算提交延迟意图返回 `consumeDeferredPoll:true`；驱动在安装分发之前清除调用的唯一许可，所以 pending 响应重新挂起而不是再次轮询。
+
+## 4.2 副作用边界
+
+每个操作过程提交、provider 请求、工具调用、钩子调用和计时器恰好经过一个注入的 `Effects`（`fx`）方法。过程接收 `fx`、其遥测上下文和只读运行时视图 — 从不直接接收 `Session`、`Models`、工具注册表或钩子运行器。非门控的 Lane 表面提交 — 接受、队列/配置调用、事实、Lane 创建和空闲写入 — 直接使用相同的 Lane 变更线和类型化 `Session` 事务 API。
+
+```ts
+type SummaryRequestOutput =
+  | { kind: "response"; message: SettledAssistantMessage }
+  | { kind: "not_started" };
+
+interface Effects {
+  commitTransition(current: CurrentOperation, next: OperationState,
+                   telemetry: TelemetryContext,
+                   expectedConfigurationSeq?: number,
+                   expectedSettingsRevision?: number):
+    Promise<CurrentOperation | undefined>;
+  commitEffectSettlement(current: CurrentOperation, plan: EffectPlan,
+                         output: SettlementOutput, telemetry: TelemetryContext):
+    Promise<SettlementResult>;
+  /** 终态事务 (§3.13)：寄存器删除、lane.lastResult、
+      lane.state 清除 — 加结果携带的任何最终条目/标签写入
+      (§3.10)。条件是 op.state 在其预期 seq 仍存在；
+      undefined = 先被外部终结 (§4.9)。转换提交以相同方式
+      从状态差异派生其条目/用量写入。 */
+  commitTerminal(current: CurrentOperation, result: OperationResult):
+    Promise<CurrentOperation | undefined>;
+  /** 按源顺序为选定的原始阶段二结果运行 after_tool。 */
+  finalizeTool(plan: Extract<EffectPlan, { kind: "tool" }>,
+               output: Extract<EffectOutput, { kind: "tool_raw" }>):
+    Promise<Extract<SettlementOutput, { kind: "tool" }>>;
+  /** 复合摘要计划对每个 provider 请求可重入地使用它。 */
+  runSummaryRequest(plan: { taskId: string; attempt: number; requestIndex: number;
+                            usageId: string; configuration: LaneConfiguration;
+                            messages: AgentMessage[];
+                            telemetryContext: TelemetryContext }):
+    Promise<SummaryRequestOutput>;
+  settleSummaryRequest(current: CurrentOperation,
+                       plan: { taskId: string; attempt: number; requestIndex: number;
+                               usageId: string },
+                       response: SettledAssistantMessage,
+                       telemetry: TelemetryContext): Promise<CurrentOperation>;
+  /** 执行前在 Lane 变更线上重新验证/注册副作用开始。 */
+  run(plan: EffectPlan): Promise<EffectOutput>;
+  sleep(delayMs: number, telemetry: TelemetryContext): Promise<void>;
+}
+```
+
+§4.1 中展示的提交辅助方法委托给这些方法。预期的 provider、工具、结构和延迟取消失败返回带内 `EffectOutput` 变体；`run` 只对关闭、harness 故障或不变量缺陷拒绝。`cancel_deferred` 是普通开始/结算的显式例外：其开始检查要求相同的打开已取消操作和 `abort()` 注册的进程本地源目标（持久阶段可能已经推进），使用仅关闭信号而不是已拉取的操作信号，其等待的输出绕过 `commitEffectSettlement` 且无持久写入。自动副作用直接执行；手动副作用门控相同的调用。被动事件监听器传递是观察，不是解释器副作用：它在发布后被隔离并遥测包装，但从不被手动驱动停靠。`sleep` 在 harness 信号被拉取时提前解析，之后循环重载取消控制。对于拆分回合摘要工作，请求意图 `commitTransition`、`runSummaryRequest` 和用量/状态 `settleSummaryRequest` 是三个不同的嵌套门控动作。`runSummaryRequest` 执行与 `run` 相同的序列化开始检查；中止优先返回 `not_started`，不留下用量，并使外层摘要计划返回其自己的 `not_started` 结算，在 cancelled 控制下丢弃结构工作。外层摘要编排动作只是进程本地组合；手动驱动和崩溃测试仍在每个嵌套边界之间停止。这些方法是完整的过程崩溃点目录；非门控的公共变更是 Part 9 中的竞争边界。
+
+**Provider 信号是 Harness 拥有的。** `fx` 提供传递给每个 provider 请求的 `AbortSignal`。没有调用者可以提供一个：`signal` 在每个公共表面的选项类型中缺失（§5.2），Harness 在分发之前从 `streamOptions` 补丁中剥离任何信号。只有 `abort()` 和 `close()` 可以拉取它。这就是使 §4.6 的保证成立的原因。
+
+**手动驱动。** 使用 `drive: "manual"` 时，Harness 在每个副作用之前停靠并一次暴露一个 JSON 安全动作：
+
+```ts
+peekAction(): Promise<ActionInfo | undefined>;      // 稳定，无副作用
+executeAction(): Promise<ActionInfo | undefined>;   // 精确释放一个
+runToCompletion(): Promise<void>;
+```
+
+Lane 表面调用 — 包括操作接受、`steer`、`abort`、配置设置器和树写入 — 保持**非门控**，使测试可以驱动任何竞争的两种顺序。手动模式下，`before_run` 处理器在接受之前停靠；没有处理器时，接受立即提交，第一个停靠动作是运行的第一个过程转换。门是可重入的：嵌套 `fx` 调用（特别是流内的请求钩子）独立停靠，驱动在其父级继续之前释放它们。停靠动作时关闭会拒绝它未执行；持久状态恰好是已提交前缀。
+
+由构造和测试强制：手动模式驱动的操作在停靠时执行零存储写入和零 provider 或工具调用。
+
+## 4.3 Lane 变更线
+
+Lane 上每个依赖状态的变更是线性化的：验证、至多一个原子提交，以及内存中更新在下一个变更开始之前完成。Provider、工具、钩子和重试工作从不占用该线。
+
+在这里序列化的：操作接受、队列入队和取消、队列消耗、延迟写入接受和应用、中止、Lane 配置设置器、完成、Lane 创建。Harness 全局流/重试/压缩/队列设置使用第二条变更线，带单调递增的进程修订。操作接受和生成/摘要开始通过在 Lane 线之前获取设置线并条件性提交两个预期 token 来快照设置；全局设置器只获取设置线。没有代码以相反顺序获取它们。
+
+后果：两个公共调用之间的每个竞争恰好有**两种**可能的持久历史，两者都必须测试（Part 9）。
+
+## 4.4 恢复
+
+恢复是对寄存器的点查找。没有历史、没有折叠、没有日志重放、没有树遍历。每个 Lane：
+
+```ts
+async function restore(lane: string): Promise<
+  { kind: "idle"; lane: string } | { kind: "suspended"; current: CurrentOperation }
+> {
+  const config = await storage.getRegister("lane.config", lane);
+  const state  = await storage.getRegister("lane.state", lane);
+  const leaf   = await storage.getRegister("lane.leaf", lane);
+
+  const opId = state.value.currentOperationId;
+  const meta    = opId ? await storage.getRegister("op.meta", opId) : undefined;
+  const opState = opId ? await storage.getRegister("op.state", opId) : undefined;
+
+  // 空闲 Lane 也被验证：叶子存在性和每个 pendingNextRun
+  // id 的 pending.entry 寄存器 (§3.3)。只有操作检查
+  // 以打开的操作为条件。
+  const entryIds     = directEntryIds(opState?.value, meta?.value, state.value, leaf.value);
+  const registerKeys = directRegisterKeys(opState?.value, state.value);
+  const [entries, registers] = await Promise.all([
+    storage.getEntries(entryIds), getRegisters(registerKeys),
+  ]);
+  validateCurrent({ config, state, leaf, meta, opState }, entries, registers); // §3.3
+  // …构建 CurrentOperation 或返回 idle…
+}
+```
+
+五次寄存器点查找：三个 Lane 寄存器，然后 — 只在操作打开时 — `op.meta` 和 `op.state`。`op.state` **就是**程序计数器：解释器选择下一个动作所需的一切要么在其中，要么可以通过精确条目 id 或确定性寄存器键从它到达。
+
+**有界水合和验证。** 从加载的状态，收集它直接命名的内容并在一个批次中获取：
+
+- **条目：** `triggerEntryId`、`latestAssistantEntryId`、`batch.assistantEntryId`、延迟 `sourceEntryId`、已完成 `resultEntryId`、Lane 叶子，以及来自 `op.meta` 的 — `meta.value` 是水合输入，不仅仅是存在检查 — `promptEntryIds`、非空 `sourceLeafId`、导航意图的非空 `targetId`；
+- **寄存器：** effect-pending 调用的 `op.tool_args/…`、结构工作的 `op.preparation/…`、每个 `inbox.*`、`control.drained*` 和 `pendingNextRun` id 的 `pending.entry/…`。
+
+然后是 §3.3 对恰好该集合的有界验证：每个命名的东西存在且具有正确的形状；*已*物化的保留 id 包含意图承诺的内容；工具调用索引完整且唯一。配置、流选项和重试策略完全不需要查找 — 它们内联在状态本身中。
+
+恢复从不做的事：读取寄存器历史（不存在）、折叠任何东西、扫描表、构建 provider 上下文、探测缺失的计划条目、审计已完成的操作、或从缺失的内容推断状态。
+
+恢复已经为验证获取了直接命名的条目和寄存器。驱动重用/缓存它们并延迟构建下一个动作需要的派生 provider 上下文或额外分支投影；`nextAction` 本身切换标量和提供的已加载映射（§4.1）。
+
+### 实例演练 — 不确定窗口中的崩溃
+
+进程在助手意图之后的流中途死亡（§3.7 的 `effect_pending` 行；§0.4 的运行）。重新打开：
+
+```
+lane.state/main -> { currentOperationId: "op_9" }
+op.meta/op_9    -> { intent: run, sourceLeafId: "e_41" }
+op.state/op_9   -> { phase: assistant effect_pending, attempt: 1,
+                     responseEntryId: "e_51", usageId: "u_7",
+                     context: { configuration: { model: {...}, ... },
+                                retryPolicy: { maxAttempts: 3, ... } } }
+
+getEntries(["e_50"]) -> 存在 ✓        已放置的 prompt
+getEntries(["e_51"]) -> 缺失          已保留，未结算 — 预期的
+```
+
+Harness 不开始任何副作用地恢复，并将操作报告为挂起。当应用调用 `resume()` 时，解释器看到没有活跃键的 `effect_pending`（进程本地 `running` 映射随进程死亡）并应用 §4.5 的不确定窗口策略 — 从捕获的状态本身：
+
+- attempt 1 < `maxAttempts` 3 → 在**捕获的**配置和策略下开始新的 attempt 2，即使用户昨天更改了模型；
+- 在上限处 → 合成错误响应：插入条目 `e_51` `{ stopReason: "error", … }`，插入零用量 `u_7`，进入失败排空 — 使用意图中保留的精确 id；
+- 控制是 `cancel_requested` → 改为在 `e_51` 下合成 `aborted`，从不重试。
+
+工具的相同形状（只有捕获**和**当前声明都说 `safe` 时重放，否则在保留结果 id 下合成 interrupted 结果）和延迟（等待应用的下次 `resume()`；每次轮询保留新 id）。
+
+### 按后端
+
+- **Memory：** 映射就是状态；无需做什么。
+- **JSONL：** 将文件重放到条目/寄存器/用量映射中 — 这是*解码*，不是恢复逻辑（§1.7）；损坏的最后一行被整体丢弃。解码后，恢复是相同的寄存器读取。
+- **SQLite**（和未来的 Postgres）：字面上的上述点查找。
+
+### 缺失身份
+
+准入解析配置的身份并在写入之前任何缺失时返回 `Err(MissingIdentities)`。之后，分发信任环境：provider 和工具在使用时按其捕获的持久身份查找，失败的查找带内结算为错误 — 与未知工具相同的契约。如果解析在状态仍可安全分发时失败（`ready`、`planned` 或摘要请求之间），接受的调用解析 `Ok({kind:"suspended", reason:"missing_identities", ...})` 而不是消耗一次尝试；状态不变，操作保持打开。后来的 `resume()` 预检查在相同条件下返回 `Err(MissingIdentities)`。注册缺失的部分不会自动驱动。因为捕获的配置是内联的，恢复精确报告缺少什么而无需解析任何东西。恢复的 `effect_pending` 遵循未知副作用恢复而不是声称副作用从未开始。合成结算、用量修复、队列应用、完成和非重放对账不需要身份。
+
+## 4.5 崩溃位置与恢复策略
+
+原子事务没有内部前缀，所以对任何重复敏感的副作用恰好有这些持久位置：
+
+| 崩溃点 | 持久的内容 | 恢复 |
+|---|---|---|
+| 意图提交之前 | 先前的状态 | 正常计划该副作用，好像什么都没发生 |
+| 意图之后，分发之前 | `effect_pending`；副作用没有运行，或无法判断 | 应用下面的策略 |
+| 副作用期间或之后，结算之前 | `effect_pending`；结果未知 | 相同 |
+| 结算提交之后 | 输出 + 用量 + 下一个状态 | 继续；从不重新结算 |
+| 队列应用提交之前/之后 | 该项完全待处理 / 条目存在且其寄存器消失 | 稍后应用 / 从不应用两次 |
+| 最终结构提交之前 | 源叶子完整，生成的工作未提交 | 按当前状态和策略重新计算 |
+| 最终结构提交之后 | 移动 + 摘要条目 + 标签 + 用量 + 终态清理 | 完成 |
+| 第一次中止提交之后 | 取消和已排空 id 持久；已排空载荷仍在其待处理寄存器中 | 不开始新的普通副作用；对账 |
+| 终态提交之后 | op 寄存器已删除，`lane.lastResult` 已写入，`currentOperationId` 为 null | Lane 空闲 |
+
+**整个系统中唯一的不确定区间是：意图持久，结算缺失。** 三条策略覆盖它：
+
+| 恢复的状态 | 策略 |
+|---|---|
+| generation `effect_pending` | 只有当**捕获的**重试策略允许时才开始更晚编号的尝试。否则在已保留的响应 id 下持久化合成错误。如果取消是持久的，改为在该 id 下持久化合成 `aborted`，从不重试。 |
+| tool `effect_pending` | 只有当存储的声明**和**当前工具声明都说 `safe` 时才重新执行持久化的 `op.tool_args` 参数。否则在保留的结果 id 下追加合成 `interrupted` 错误。 |
+| deferred `effect_pending` | running 控制，等待应用的下次 `resume()`，它保留新的轮询/响应/用量 id；cancelled 控制，将现有保留的响应/用量 id 合成结算为 `aborted`。无上限。 |
+
+## 4.6 中止
+
+中止不是一个阶段。它是 `control`。
+
+- **第一次 `abort()`**：一个提交设置 `control = cancel_requested`，记录 `requestedAt`，将确切的已排空 steer 和 follow-up id 移入 `control.drained*`，保持 `phase` 不变。已排空项的 `pending.entry` 寄存器**不**删除：`AbortResult` 和崩溃后的 `SuspendedOperation.aborting` 从它们解引用确切载荷，它们存活到终态事务（§3.11、§3.13）。提交后，Harness 拉取信号并取消未释放的门控副作用。标记持久后调用解析；对账在后台运行（自动驱动）或在其下一个动作处停靠（手动驱动）。
+- **后来的 `abort()`** 操作打开时：不追加任何东西，不信号任何东西，返回相同的已排空载荷。终态之后：`NoActiveOperation`。
+- **取消后仍然允许**：结算已经意图的副作用、写入其用量、应用已接受的延迟写入、提交配置更改、完成取消。
+- **禁止**：开始任何新的 provider 请求、工具、决策钩子或重试。
+- **副作用后钩子**：中止和尚未开始的 `after_response`/`after_tool` 在副作用开始检查上序列化。中止优先跳过钩子；助手/获取结算使用原始响应然后规范化为 `aborted`，而活跃工具保持其原始结果带 `terminate:false`。钩子优先让它完成并使用其转换后的值。已经在运行的钩子不被强制中断。
+- **按输出对账**：计划的工具调用得到 aborted 错误结果；恢复的已开始调用得到 `interrupted`；活跃的已开始调用按上述保持其终结或原始结果；取消后的助手或获取结算以停止原因 `aborted` 存储在保留的响应 id 下并移动到 cancelled 检查点状态。
+
+**信号所有权使 `aborted` 无歧义。** Provider 实现必须当且仅当给它们的信号被拉取时设置 `stopReason: "aborted"`，且 Harness 独占拥有该信号（§4.2）。由于 `abort()` 在拉取之前提交 `control`，已结算的 `aborted` 响应总是已有持久的取消。超时、传输失败、格式错误的流和 provider 侧拒绝都以 `error` 结算并走普通重试路径 — 这是正确的，因为那些应该重试而用户中止不应该。带 `control.status === "running"` 的 `aborted` 响应不可达；如果存在一个，会话是损坏的（Part 9）。
+
+在延迟源上，`abort()` Lane 作业将最新持久句柄注册为进程本地取消目标并立即安装 `Effects` 动作；取消是尽力而为的，从不重试。缺失 provider 身份跳过取消但不跳过持久对账。
+
+没有通用的助手关闭。Harness 从不为了制造一个而开始请求或追加助手消息。步骤之间、工具工作期间或挂起时的中止因此可能完全不产生中止特定的助手事件。
+
+对结构操作，提交点决定竞争：先提交的标记丢弃内存中生成的工作并以 `aborted` 完成；如果结构提交赢了，过程完成那个已提交的压缩或导航并以 `completed` 完成。
+
+## 4.7 关闭 — 受控崩溃
+
+**关闭不是中止。** 关闭不写任何东西：没有取消、没有终态、没有结算。
+
+```
+close()
+  → 停止准入新工作
+  → 拉取信号，使进行中的 provider 请求和协作工具停止
+  → 拒绝停靠的手动动作和未解析的本地 promise
+  → 让存储已接受的提交排空
+  → 关闭存储，释放写者租约 (§1.7)
+```
+
+Harness 级别的准入屏障将关闭与每个操作和表面提交线性化。先获取准入的提交允许完成，关闭等待它；先封闭准入的关闭阻止提交进入存储。封闭后切断的流在本地以 `aborted` 结算，但其结算事务从不被准入。持久状态因此停止在 `effect_pending`，与进程死亡后完全一样。
+
+所以关闭不需要自己的恢复机制：重新打开发现 `effect_pending` 并应用 §4.5 策略 — 捕获的重试策略下更晚编号的尝试，或上限处的合成错误。打开的操作保持打开且可恢复。
+
+这也保持 aborted 蕴含 cancelled 的不变量（Part 9）为真。关闭拉取与中止相同的信号，但封闭的准入屏障阻止那个本地中止的响应以 running 控制提交。
+
+## 4.8 故障
+
+失败的存储提交使整个 Harness 故障。故障的 Harness 停止所有副作用并以 `HarnessFault` 拒绝待处理和未来的调用；它从不是 `Err` 结果。故障关闭观察之前获得的快照中出现 `faulted: true`。原因修复后，重新打开从其寄存器恢复每个 Lane。关闭同样以 `HarnessClosed` 拒绝已接受的本地操作 promise；尚未接受的调用返回 `Err(Closed)`。没有 `Result` 通道的表面 — 返回 `Promise<void>` 的配置和事实设置器、返回 id 字符串的 `SessionTree` 追加 — 在关闭时和之后以 `HarnessClosed` 拒绝。Provider、工具和隔离的钩子失败保持每 Lane 和带内。受信任的确定性应用计算（`systemPrompt`、`toolContext`、`toProviderMessages` 或 `entryProjector`）的抛出/拒绝是应用缺陷并使 Harness 故障；它从不会作为未声明的操作错误逃逸。`AgentTool.prepareArguments` 是由工具管线作为合成工具错误处理的刻意例外。
+
+## 4.9 外部终结
+
+操作可以从其自己的驱动之外结束：管理性强杀工具 — 或任何未来的修复器（Part 6）— 可以提交终态事务（§3.13），带或不带保留 id 下的合成结算，而活跃驱动仍在内存中持有该操作。驱动以恰好一种方式发现这一点：条件提交或 `reloadCurrent` 发现操作不再是 Lane 的当前操作 — 其寄存器缺失。
+
+规则：**驱动停止。** 它拉取操作信号使进行中的副作用取消，不写入地丢弃每个内存结果 — 没有寄存器留下拥有结算 — 发出操作的结束事件，并从 `lane.lastResult`（终结事务写入的）解析活跃调用者的 promise（当存在时解引用 `finalAssistantEntryId` 重建 `finalMessage`）。
+
+在发布的后端上，终结器要么在进程内 — 像任何其他作业一样在 Lane 变更线上提交的管理表面 — 要么是在关闭/崩溃后首先接管写者租约的独立进程。每个终态事务，包括驱动自己的，都以 `op.state` 在其预期 seq 仍存在为条件，这就是使不变量 21（每个操作至多一个终态事务）在竞争中成立的原因。它从不重新创建寄存器，从不提交竞争的终态事务，也从不把缺失视为损坏：缺失的 `op.*` 寄存器带已清除的 `currentOperationId` 是普通的终态后形状（§3.13）。
+
+挂起的操作不需要驱动停止。终结器的终态事务使 Lane 空闲；后来的 `resume()` 发现 `currentOperationId: null` 并返回 `NothingToResume`，应用从 `getLastResult()` 读取结果（§5.1）— 与任何崩溃后结果相同的对账路径。
