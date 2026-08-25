@@ -701,3 +701,247 @@ E   assistant message                 真实结果
 ### Lane 表面
 
 `AgentLane` 是一个 Lane 的操作表面。`AgentHarness` 为 `main` 实现它：`harness.prompt(...)` 是 main 的 prompt。每个方法都是异步的，包括进程内实现从内存回答的 getter：接口必须可由远程代理实现，所以没有签名可以承诺只有本地实现能保持的同步性。同步例外：`name` 和监听器注册（`hooks.on`、`events.on`）— 服务器通过自己的传输桥接事件，不是注册。
+
+```ts
+interface AgentLane {
+  readonly name: string;                 // harness 本身上为 "main"
+  getLeafId(): Promise<string | null>;
+
+  // 操作。从不抛出；每次调用以结果解析（见下文）。
+  // 每 Lane 至多一个操作；其他 Lane 不受影响。
+  prompt(text: string, images?: ImageContent[]): Promise<RunResult>;
+  prompt(message: AgentMessage | AgentMessage[]): Promise<RunResult>;
+  skill(name: string, additionalInstructions?: string): Promise<RunResult>;
+  promptFromTemplate(name: string, args?: string[]): Promise<RunResult>;
+  compact(options?: { customInstructions?: string }): Promise<CompactionResult>;
+  navigateTree(targetId: string | null, options?: NavigateOptions): Promise<NavigationResult>;
+  resume(): Promise<ResumeResult>;       // 继续此 Lane 的打开操作
+  abort(): Promise<AbortResult>;         // 解析时持久；对账在后台运行
+
+  // 队列。解析时持久（queue_enqueued 记录）；返回的
+  // entryId 在消费之前标识该项。steer/followUp 需要
+  // 活跃运行；nextRun 和 cancelQueued 任何时候可用。
+  steer(text: string, images?: ImageContent[]): Promise<QueueResult>;
+  steer(message: AgentMessage): Promise<QueueResult>;
+  followUp(text: string, images?: ImageContent[]): Promise<QueueResult>;
+  followUp(message: AgentMessage): Promise<QueueResult>;
+  nextRun(text: string, images?: ImageContent[]): Promise<QueueResult>;
+  nextRun(message: AgentMessage): Promise<QueueResult>;
+  /** 持久撤回待处理队列项（queue_cancelled 记录）。 */
+  cancelQueued(entryId: string): Promise<CancelQueuedResult>;
+  /** 追加调整用量记录（第 5 节）：对账、估计、更正。
+      任何时候允许；记录不是上下文。 */
+  recordUsage(usage: Usage, options?: { entryId?: string; details?: JsonValue }):
+    Promise<RecordUsageResult>;
+
+  waitForIdle(): Promise<void>;
+  runWhenIdle(callback: () => void | Promise<void>): Promise<void>;   // 仅运行时
+
+  // 手动驱动控制。第 15 节定义其确切行为；它们
+  // 只在 AgentHarnessOptions.drive === "manual" 时可用。
+  peekAction(): Promise<ActionInfo | undefined>;
+  executeAction(): Promise<ActionInfo | undefined>;
+  runToCompletion(): Promise<void>;
+
+  // 持久配置 — 此 Lane 叶子后面路径上的条目，
+  // 通过点查询解析。设置器在持久接受时解析；
+  // 运行打开时它们变为此 Lane 上的延迟写入。
+  getModel(): Promise<Model>;                 setModel(model: Model): Promise<void>;
+  getThinkingLevel(): Promise<ThinkingLevel>; setThinkingLevel(level: ThinkingLevel): Promise<void>;
+  getActiveTools(): Promise<string[]>;        setActiveTools(names: string[]): Promise<void>;
+
+  /** 此 Lane 对树的视图：读取默认为此 Lane 的叶子；
+      运行打开时追加延迟，否则链接到叶子（第 12 节）。 */
+  session: SessionTree;
+
+  /** 范围化的：此 Lane 的 transcript、状态、队列和事件（第 9 节）。 */
+  watch(): Promise<{ snapshot: LaneSnapshot; start: (listener) => void; unsubscribe: () => void }>;
+}
+```
+
+所有 prompt 重载规范化为 `AgentMessage[]`。文本加图片变成一条用户消息；输入消息数组在验证后保持其顺序。技能和模板展开在规范化存储之前发生。这个规范化数组是 `OperationStartedRecord.intent.originalPrompt`；它排除捕获的 `nextRun` 项和钩子注入。
+
+### Harness
+
+```ts
+class AgentHarness implements AgentLane {
+  /** 打开会话、恢复每个 Lane、不开始副作用。
+      每个有打开操作的 Lane 一个挂起条目。 */
+  static create(options: AgentHarnessOptions): Promise<{
+    harness: AgentHarness;
+    suspended: SuspendedOperation[];
+  }>;
+
+  // Lane 管理。名称是永久的应用键
+  //（"slack:1719432.0021"）。句柄是绑定到
+  // 名称的无状态外观：任意数量可以存在，全部等价；身份是名称，
+  // 从不是对象。Lane 不删除也不重命名。
+  lane(name: string): Promise<AgentLane | undefined>;    // 查找，从不创建
+  createLane(name: string, at: string | null): Promise<CreateLaneResult>;
+  /** 清单。总是包含 "main"。 */
+  lanes(): Promise<LaneInfo[]>;
+
+  // Harness 全局配置：注册表和运行时能力。
+  // 工具实现是代码，不能持久化；活跃集合
+  //（名称）按 Lane 持久化。
+  getTools(): Promise<AgentTool[]>;      setTools(tools: AgentTool[], activeNames?: string[]): Promise<void>;
+  getResources(): Promise<Resources>;    setResources(r: Resources): Promise<void>;
+  getStreamOptions(): Promise<StreamOptions>;  setStreamOptions(o: StreamOptions): Promise<void>;
+  getRetryPolicy(): Promise<RetryPolicy>;      setRetryPolicy(p: RetryPolicy): Promise<void>;
+  getCompactionSettings(): Promise<CompactionSettings>; setCompactionSettings(s): Promise<void>;
+  getSteeringMode(): Promise<QueueMode>;       setSteeringMode(m): Promise<void>;
+  getFollowUpMode(): Promise<QueueMode>;       setFollowUpMode(m): Promise<void>;
+
+  watchSession(): Promise<{ snapshot: SessionSnapshot;
+                            start: (listener) => void; unsubscribe: () => void }>;
+
+  hooks: Hooks;
+  events: Events;
+
+  /** 干净分离 (§4.7)。打开的操作保持可恢复。 */
+  close(): Promise<void>;
+}
+
+interface LaneInfo {
+  name: string;
+  leafId: string | null;
+  operation: null | { id: string; kind: "run" | "compaction" | "navigation";
+                      status: "running" | "suspended" | "aborting" };
+}
+```
+
+### 选项
+
+```ts
+interface AgentHarnessOptions {
+  // 身份和 provider
+  session: Session;
+  models: Models;                        // 所有请求的 provider 集合
+
+  // 初始 Lane 配置 — 当 Lane 的路径没有持久化
+  // 配置条目时使用；否则持久化配置获胜。
+  model: Model;
+  thinkingLevel?: ThinkingLevel;
+  activeToolNames?: string[];
+
+  // 运行时能力 — harness 全局，create() 时重建
+  tools?: AgentTool[];
+  toolContext?: TContext | (() => TContext | Promise<TContext>);
+  systemPrompt?: string | ((ctx) => string | Promise<string>);   // 每请求评估
+  resources?: Resources;                 // 技能、prompt 模板
+
+  // 执行策略
+  streamOptions?: StreamOptions;         // 传输、头部、超时、延迟
+  retry?: RetryPolicy;                   // 步骤尝试上限；持久计数
+  compaction?: CompactionSettings;
+  steeringMode?: QueueMode;
+  followUpMode?: QueueMode;
+  /** 批次默认；声明 executionMode "sequential" 的被调用工具
+      强制顺序，不管设置（第 14 节）。 */
+  toolExecution?: "sequential" | "parallel";   // 默认 parallel
+  /** automatic：操作方法驱动其过程到完成。
+      manual：操作的副作用在门处停靠；peekAction() /
+      executeAction() / runToCompletion() 驱动它们。确定性测试
+      和调试器。第 15 节。 */
+  drive?: "automatic" | "manual";       // 默认 automatic
+
+  // 投影
+  /** AgentMessage → provider 消息，每次请求之前。默认处理
+      bash 执行、自定义消息、摘要；在接受时验证
+      排队/提示消息转换为用户消息。 */
+  toProviderMessages?: (messages: AgentMessage[]) => Message[] | Promise<Message[]>;
+  /** 自定义条目 → 上下文消息，在上下文构建时。没有投影器的
+      条目从不进入 provider 上下文。 */
+  entryProjectors?: Record<string, EntryProjector>;
+
+  // 遥测。默认上下文是 no-op。第 18 节。
+  telemetryContext?: TelemetryContext;
+}
+```
+
+### 结果和标记错误
+
+公共 API 使用 `better-result` v3 模式的小型内嵌子集。`packages/agent` 不对 `better-result` 取运行时依赖。
+
+子集只包含：
+
+- 可序列化的 `Result.ok()` 和 `Result.err()` 值；
+- `Result.isOk()` 和 `Result.isErr()` 守卫；
+- 带字面 `_tag`、只读载荷、正常 `Error` 行为、`.toJSON()` 和类级 `.is()` 的 `TaggedError`；
+- 穷举的 `matchError()`。
+
+```ts
+export type Result<T, E> =
+  | { ok: true; value: T }
+  | { ok: false; error: E };
+
+export const Result = {
+  ok<T>(value: T): Result<T, never> {
+    return { ok: true, value };
+  },
+  err<E>(error: E): Result<never, E> {
+    return { ok: false, error };
+  },
+  isOk<T, E>(result: Result<T, E>): result is { ok: true; value: T } {
+    return result.ok;
+  },
+  isErr<T, E>(result: Result<T, E>): result is { ok: false; error: E } {
+    return !result.ok;
+  },
+};
+
+export interface TaggedErrorValue<Tag extends string> extends Error {
+  readonly _tag: Tag;
+  toJSON(): { _tag: Tag; message: string } & Record<string, unknown>;
+}
+
+export interface TaggedErrorFactory<Tag extends string> {
+  new <Props extends { message: string }>(
+    props: Props,
+  ): TaggedErrorValue<Tag> & Readonly<Props>;
+  is(value: unknown): value is TaggedErrorValue<Tag>;
+}
+
+export declare function TaggedError<Tag extends string>(tag: Tag): TaggedErrorFactory<Tag>;
+
+export type ErrorMatchers<E extends TaggedErrorValue<string>, R> = {
+  [Tag in E["_tag"]]: (error: Extract<E, { _tag: Tag }>) => R;
+};
+
+export declare function matchError<E extends TaggedErrorValue<string>, R>(
+  error: E,
+  matchers: ErrorMatchers<E, R>,
+): R;
+```
+
+实现预期保持在约 80 行以内，不包括测试。它没有映射组合器、生成器组合、promise 包装器、重试辅助、集合辅助或 `Panic` 类。Promise 仍然是异步边界。`HarnessFault` 对缺陷使用原生抛出和 promise 拒绝。
+
+每个预期拒绝是一个类。其 tag 是字符串字面量。其字段携带调用者需要的数据。使用下文展示的 v3 类形式；不要在属性类型后添加尾随 `()`：
+
+```ts
+class LaneBusy extends TaggedError("LaneBusy")<{
+  lane: string;
+  operationId: string;
+  operationKind: "run" | "compaction" | "navigation";
+  message: string;
+}> {}
+
+class MissingIdentities extends TaggedError("MissingIdentities")<{
+  lane: string;
+  tools: string[];
+  models: string[];
+  message: string;
+}> {}
+```
+
+其余类使用相同基础：
+
+| 类 | 除 `message` 外的载荷 |
+|---|---|
+| `NoActiveRun` | `lane` |
+| `NoActiveOperation` | `lane` |
+| `NothingToResume` | `lane` |
+| `InvalidMessage` | `lane`、`reason` |
+| `UnknownSkill` | `name` |
+| `UnknownTemplate` | `name` |
+| `UnknownTarget` | `targetId` |
