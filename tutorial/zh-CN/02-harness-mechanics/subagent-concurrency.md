@@ -29,6 +29,10 @@ review:
 
 并发只有在边界清晰时才有收益。并行只读工具共享权限但各有调用 ID；子 Agent 拥有独立会话和最小授权；父级写工具用路径预留阻止子 Agent 重叠写入。调度器必须同时限制总数、写者数和路径冲突，嵌套请求在容量不足时 fail fast 而不是死等。
 
+:::note
+并发是**能力**，不是默认。只有显式 safe 或 scheduler 批准的操作才可并行。
+:::
+
 ## 上一章遗留问题
 
 M-13 管住了单个执行流的记忆和工作区。M-14 回答：多个 task/fleet 分支同时跑时谁拥有哪个路径？子 Agent 会话如何与父目录关联？一个分支超时如何不影响其他分支？
@@ -42,6 +46,10 @@ M-13 管住了单个执行流的记忆和工作区。M-14 回答：多个 task/f
 
 Reasonix 用 session-scoped `SubagentScheduler` 统一 task/fleet/nested 场景；DeepSeek Harness 把子 Agent 建模为 durable parent-child session 关系；Pi 在本地工具层用 mutation queue 与 terminate hint 控制并行批次。
 
+:::tip
+两类并发：**parallel tool calls**（同上下文短操作）和 **subagents**（独立会话+独立预算）。隔离方式不同。
+:::
+
 ## 核心不变量
 
 1. **并发是能力不是默认**：只有显式 safe 或 scheduler 批准的操作才可并行。
@@ -52,6 +60,10 @@ Reasonix 用 session-scoped `SubagentScheduler` 统一 task/fleet/nested 场景�
 6. **取消全树传播**：父 cancel → 子 abort → 进程树终止；部分完成的分支保留 partial 事实。
 
 失效边界在于外部系统没有事务：两个子 Agent 各自成功调用不同 API，也可能在业务层互相矛盾。join 层必须做语义审查，而不是只看 exit code。
+
+:::caution
+join 层必须做**语义审查**，而不是只看 exit code。两个子 Agent 各自成功也可能在业务层互相矛盾。
+:::
 
 ## 理想模型
 

@@ -27,7 +27,11 @@ review:
 
 ## 一句话结论
 
-压缩是在“还能继续工作”和“不丢失决策前提”之间重新分配 token：先做可回放的 tool result pruning，再做有边界、有来源的 summary；硬截断只能用于原始输出层，并且必须留下总数、方向和截断原因。权威日志永远不是压缩器的草稿纸。
+压缩是在"还能继续工作"和"不丢失决策前提"之间重新分配 token：先做可回放的 tool result pruning，再做有边界、有来源的 summary；硬截断只能用于原始输出层，并且必须留下总数、方向和截断原因。权威日志永远不是压缩器的草稿纸。
+
+:::note
+权威日志**永远不是压缩器的草稿纸**。压缩只改变投影，不删除事实。
+:::
 
 ## 上一章遗留问题
 
@@ -48,6 +52,14 @@ Reasonix 用 durable projection receipt 记录每次维护；DeepSeek Harness �
 5. **预算分级**：threshold 触发低成本维护；hard/overflow 才允许更强 recovery；manual 失败要向操作者报告而不是悄悄维持旧视图。
 
 失效边界在于持久化时机：进程内 projection 可以回滚，跨进程 JSONL/SQLite 追加则依赖事务边界和崩溃修复。若日志已 torn write，必须走恢复章节，而不是继续压缩。
+
+:::tip
+压缩分层：**prune**（低风险） → **summary**（有边界） → **事务化替换** → **物理 overflow recovery**。
+:::
+
+:::caution
+若日志已 torn write，必须走恢复章节，而不是继续压缩。
+:::
 
 ## 理想模型
 

@@ -29,6 +29,10 @@ review:
 
 Persistence 要回答四个问题：哪份数据是权威？何时原子提交？哪些视图可以重建？旧版本如何迁移？可靠设计把 append-only canonical log 放在中心，投影和缓存都可丢弃或重放；未知的必需事件必须拒绝重建，而不是静默跳过。
 
+:::note
+四个核心问题：**哪份是权威？何时原子提交？哪些可重建？旧版本如何迁移？**
+:::
+
 ## 上一章遗留问题
 
 M-10 说明 checkpoint 只能包含闭合事实。M-11 回答：这些事实以什么格式落盘？半行 JSON 怎么办？v1 日志如何升级到 v3？“数据库说成功但工作区没变”如何避免？
@@ -44,6 +48,10 @@ M-10 说明 checkpoint 只能包含闭合事实。M-11 回答：这些事实以�
 
 Reasonix 用 event JSONL 加兼容 checkpoint；DeepSeek Harness 把 SessionEventMap 定义为 append-only source of truth 并区分 ignorable 词汇增长与 format bump；Pi 用 header version 加 id/parentId entry tree，并提供 v1→v2→v3 迁移。
 
+:::tip
+分层方案：**canonical events**（权威） → **projections**（可重建） → **caches**（可删除） → **external effects**（登记对账）。
+:::
+
 ## 核心不变量
 
 1. **权威先提交**：先写 canonical event/log，再更新内存投影和 UI。
@@ -54,6 +62,10 @@ Reasonix 用 event JSONL 加兼容 checkpoint；DeepSeek Harness 把 SessionEven
 6. **副作用登记**：外部动作的 request key/job id/result ref 与事件关联，供对账。
 
 失效边界在于存储介质和并发：JSONL 可能 torn write，SQLite 有事务但锁竞争，云对象存储最终一致。没有一种介质能同时优化所有维度。
+
+:::caution
+未知且无 `ignorable` 标记的事件，reader 必须**拒绝重建**，不能静默跳过。
+:::
 
 ## 理想模型
 

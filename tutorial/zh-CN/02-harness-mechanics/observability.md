@@ -29,6 +29,10 @@ review:
 
 Observability 不是多打几条 log，而是让每个 Run 都能回答四层问题：系统健康吗？发生了什么？调用如何嵌套？为什么这样决定？实现基础是稳定 ID、事件因果引用、低基数错误分类和默认无正文的 telemetry；Replay 则用权威事件加录制副作用，在受控环境中重建输入与治理路径。
 
+:::note
+四层问题：**系统健康吗？发生了什么？调用如何嵌套？为什么这样决定？**
+:::
+
 ## 上一章遗留问题
 
 M-11 保证 canonical log 可信。M-12 回答：如何从 log 聚合出指标？一次失败如何定位到具体 tool call？模型升级后如何比较旧行为？prompt 里有源码或密钥时怎么办？
@@ -44,6 +48,10 @@ M-11 保证 canonical log 可信。M-12 回答：如何从 log 聚合出指标�
 
 Reasonix 的 compaction receipt 刻意不包含 transcript content，只用 hashes and counts；Pi 的文档明确 Telemetry alone is content- and secret-free by default；DeepSeek Harness 用 `sourceEventSeqs` 把派生结果钉回原始 chunk。
 
+:::tip
+分层方案：**events/log**（完整权威） → **traces**（结构化 span） → **metrics**（聚合数值） → **replay fixtures**（可离线运行）。
+:::
+
 ## 核心不变量
 
 1. **ID 因果完整**：trace_id/session_id/run_id/turn/step/tool_call_id 贯穿所有信号。
@@ -54,6 +62,10 @@ Reasonix 的 compaction receipt 刻意不包含 transcript content，只用 hash
 6. **版本可追溯**：model/provider/prompt/policy/schema 版本进入 span 或 request header。
 
 失效边界在于第三方 SDK：它可能自行记录 body。因此边界不只是自家代码，还包括 HTTP client 日志、APM agent 和错误上报工具。
+
+:::danger
+第三方 SDK 可能自行记录 body。边界不只是自家代码，还包括 HTTP client 日志、APM agent 和错误上报工具。
+:::
 
 ## 理想模型
 

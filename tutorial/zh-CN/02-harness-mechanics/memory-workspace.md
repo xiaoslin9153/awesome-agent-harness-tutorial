@@ -27,7 +27,11 @@ review:
 
 ## 一句话结论
 
-Memory 不是“多存点笔记”，而是把稳定事实变成带来源、范围、版本和失效时间的结构化对象；Workspace 也不是无限桌面，而是有写根、mutation 记录和生命周期的任务环境。检索到的记忆只是投影，冲突时必须回到来源或要求人工裁决。
+Memory 不是"多存点笔记"，而是把稳定事实变成带来源、范围、版本和失效时间的结构化对象；Workspace 也不是无限桌面，而是有写根、mutation 记录和生命周期的任务环境。检索到的记忆只是投影，冲突时必须回到来源或要求人工裁决。
+
+:::note
+检索到的记忆**只是投影**，不是事实本身。冲突时必须回到来源或要求人工裁决。
+:::
 
 ## 上一章遗留问题
 
@@ -43,6 +47,10 @@ M-12 解决了单次 Run 的可见性。但用户偏好、项目约定和工作�
 
 Reasonix 提供完整的 memory 工具链：project/global scope、revision 快照、subject key 唯一性、pinned 预算警告、volatility/expiry。Pi 用 custom/compaction entry 把扩展事实纳入会话树。Reasonix 还用 WorkspaceMutation 事件让宿主感知资源失效。
 
+:::tip
+三层设计：**durable facts**（可修订） + **derived retrieval**（可重建） + **workspace state**（有权限约束）。
+:::
+
 ## 核心不变量
 
 1. **来源可溯**：每条记忆能回答来自哪次确认或哪个事件。
@@ -53,6 +61,10 @@ Reasonix 提供完整的 memory 工具链：project/global scope、revision 快�
 6. **工作区写入有登记**：tool 写完后发出 paths/content/tree/git meta 失效事件，失败也可能部分生效。
 
 失效边界在于自然语言事实本身可能含糊：schema 能记录 volatility，却不能保证描述正确。所以人工 review 与 forget 入口不可省略。
+
+:::caution
+人工 review 与 forget 入口**不可省略**。schema 能记录 volatility，却不能保证描述正确。
+:::
 
 ## 理想模型
 

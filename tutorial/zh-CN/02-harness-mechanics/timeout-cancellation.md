@@ -27,7 +27,11 @@ review:
 
 ## 一句话结论
 
-Timeout 回答“等多久必须放弃”，Cancellation 回答“谁要求停止”。两者都要把原因传播到 provider stream、工具 body 和子进程，但都不能把终止当成回滚：未派发调用记录 aborted-before-dispatch，已启动调用等它达到 quiescence 后标为 aborted/partial，外部状态未知则交给查询或补偿。
+Timeout 回答"等多久必须放弃"，Cancellation 回答"谁要求停止"。两者都要把原因传播到 provider stream、工具 body 和子进程，但都不能把终止当成回滚：未派发调用记录 aborted-before-dispatch，已启动调用等它达到 quiescence 后标为 aborted/partial，外部状态未知则交给查询或补偿。
+
+:::note
+终止**不是回滚**。未派发的记录为 aborted-before-dispatch；已启动的等 quiescence 后标为 aborted/partial；外部状态交给查询或补偿。
+:::
 
 ## 上一章遗留问题
 
@@ -39,6 +43,10 @@ M-08 说明 timeout 属于 state unknown。M-09 要回答：信号如何穿过�
 
 Reasonix 用 context cancel 加 CancelRequested 区分显式用户停止；DeepSeek Harness 把 body 是否启动作为 cancellation result 分界，并要求 started promise 达到 quiescence；Pi 用 process tree kill 和 abortable retry sleep 保证本地命令可终止。
 
+:::tip
+三种取消来源，恢复策略不同：**timeout** 可缩小范围重试 → **cancel** 不应自动继续 → **shutdown** 需要租约与重启协议。
+:::
+
 ## 核心不变量
 
 1. **信号可达边界**：UI/Controller → Run → provider stream → tool executor → child process 都能收到终止通知。
@@ -47,7 +55,11 @@ Reasonix 用 context cancel 加 CancelRequested 区分显式用户停止；DeepS
 4. **副作用不消失**：已完成配对结果保留；partial 输出转 local-only 或 structured metadata；外部状态标记 unknown。
 5. **清理有限且可观察**：SIGTERM → 宽限期 → SIGKILL；清理失败要记录，不能静默吞掉。
 
-失效边界在于不可中断资源：远端任务可能继续运行，文件系统操作可能只完成一半，第三方 API 没有 cancel endpoint。此时唯一诚实状态是“本地停止，远端未知”。
+失效边界在于不可中断资源：远端任务可能继续运行，文件系统操作可能只完成一半，第三方 API 没有 cancel endpoint。此时唯一诚实状态是"本地停止，远端未知"。
+
+:::danger
+唯一诚实状态是"**本地停止，远端未知**"。不能假装远端也停了。
+:::
 
 ## 理想模型
 

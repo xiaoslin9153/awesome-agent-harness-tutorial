@@ -27,7 +27,11 @@ review:
 
 ## 一句话结论
 
-Checkpoint 不是“保存当前步骤号”，而是在一致边界上记录闭合事实、决策范围和外部任务引用。Resume 是带门槛的进入：先验证 session 身份、schema 版本、环境 cwd 和持久化后端，再处理 interrupted/pending 副作用；不能因为文件存在就自动续跑。
+Checkpoint 不是"保存当前步骤号"，而是在一致边界上记录闭合事实、决策范围和外部任务引用。Resume 是带门槛的进入：先验证 session 身份、schema 版本、环境 cwd 和持久化后端，再处理 interrupted/pending 副作用；不能因为文件存在就自动续跑。
+
+:::note
+Checkpoint 记录的是**闭合事实**，不是"当前步骤号"。Resume 是**带门槛的进入**，不能因为文件存在就自动续跑。
+:::
 
 ## 上一章遗留问题
 
@@ -39,6 +43,10 @@ M-09 保证取消后留下配对结果、local-only display 和 unknown remote�
 
 Reasonix 用 CAS-protected Save 与 save-verified baseline 区分正常快照和历史重写；DeepSeek Harness 把 resume 建模为 persistence.prepare + seed，并用 `session/end-seed` 分隔种子与 live 工作；Pi 在 SessionManager 中打开 JSONL、迁移版本并重建索引，runtime 再发 `session_start reason=resume`。
 
+:::tip
+可靠方案 = **append-only event log**（权威） + **checkpoint**（兼容/分页） + **load 时 CAS 和环境检查**。
+:::
+
 ## 核心不变量
 
 1. **只存闭合事实**：committed message/tool result/approval decision 可入 checkpoint；streaming draft 不行。
@@ -48,7 +56,11 @@ Reasonix 用 CAS-protected Save 与 save-verified baseline 区分正常快照和
 5. **pending 先对账**：interrupted tool、background job、unknown external action 在继续前查询、补偿或标记人工。
 6. **租约防双写**：同一 session 同一时间只有一个 owner；rotation 清理旧 pending prompts。
 
-失效边界在于外部世界没有事务：文件已改、远端已部署、消息已发送。checkpoint 能记录“我们以为做到哪”，但不能让宇宙回滚。
+失效边界在于外部世界没有事务：文件已改、远端已部署、消息已发送。checkpoint 能记录"我们以为做到哪"，但不能让宇宙回滚。
+
+:::danger
+checkpoint 能记录"我们以为做到哪"，但**不能让宇宙回滚**。外部副作用一旦发生就不可撤销。
+:::
 
 ## 理想模型
 

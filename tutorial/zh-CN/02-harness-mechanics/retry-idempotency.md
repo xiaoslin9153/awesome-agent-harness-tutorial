@@ -27,7 +27,11 @@ review:
 
 ## 一句话结论
 
-重试不是异常处理器。先回答三个问题：失败是瞬时的还是确定的？重复执行是否安全？上次到底做到哪一步？只有答案分别是“瞬时”“安全”和“已知/可查询”时才自动重试；否则返回修正型观察、补偿或暂停。每次尝试都要成为追加事实，不能覆盖前一次失败。
+重试不是异常处理器。先回答三个问题：失败是瞬时的还是确定的？重复执行是否安全？上次到底做到哪一步？只有答案分别是"瞬时""安全"和"已知/可查询"时才自动重试；否则返回修正型观察、补偿或暂停。每次尝试都要成为追加事实，不能覆盖前一次失败。
+
+:::note
+三个前置问题：**失败是瞬时的还是确定的？重复执行是否安全？上次到底做到哪一步？**
+:::
 
 ## 上一章遗留问题
 
@@ -44,6 +48,10 @@ M-07 把执行困在边界内，但命令仍可能因网络抖动、429 或进�
 
 Reasonix 用 frozen sampling request 保证重放一致；DeepSeek Harness 让插件在 `agent/request-error` waterfall 中决定是否 retry；Pi 用 auto retry 做指数退避并把 error message 从 live state 移除但保留 session 历史。
 
+:::tip
+分类决定策略：**provider request** 可重放 → **read-only** 可重试 → **write/external** 需幂等 → **业务变化**是新决策。
+:::
+
 ## 核心不变量
 
 1. **分类先行**：transient、deterministic、partial、state-unknown、infra-unavailable 分别走不同分支。
@@ -54,6 +62,10 @@ Reasonix 用 frozen sampling request 保证重放一致；DeepSeek Harness 让�
 6. **未知不对账成成功**：timeout 后只能查询、幂等重放、补偿或标记人工确认。
 
 失效边界在于外部系统契约：没有 idempotency API 时，客户端只能尽量预检；有 API 但 key 过短也会碰撞。跨进程恢复还要求 key 能从 durable checkpoint 重导出。
+
+:::danger
+未知**不对账成成功**。timeout 后只能查询、幂等重放、补偿或标记人工确认。
+:::
 
 ## 理想模型
 

@@ -27,7 +27,11 @@ review:
 
 ## 一句话结论
 
-Sandbox 是执行层的强制边界，权限是策略层的能力声明。可靠设计把两者分开：policy 说“这次可以写 workspace”，enforcement 用 Seatbelt/bubblewrap/Landlock/ACL 让进程真的只能写那里。后端缺失时必须 fail closed 或显式降级，绝不能静默裸跑。
+Sandbox 是执行层的强制边界，权限是策略层的能力声明。可靠设计把两者分开：policy 说"这次可以写 workspace"，enforcement 用 Seatbelt/bubblewrap/Landlock/ACL 让进程真的只能写那里。后端缺失时必须 fail closed 或显式降级，绝不能静默裸跑。
+
+:::note
+policy 说"这次可以写 workspace"，enforcement 让进程**真的只能写那里**。两者不能混为一谈。
+:::
 
 ## 上一章遗留问题
 
@@ -45,6 +49,10 @@ M-06 保证人批准了某个请求。但被批准的 shell 仍可能 fork 子�
 
 Reasonix 强调 permitted command still cannot escape the box；DeepSeek Harness 把 confinement 定义为 same-world process seam；Pi 当前核心偏本地进程控制与环境裁剪，依赖宿主扩展实现更强隔离。
 
+:::tip
+分层设计：**policy**（意图） → **identity**（身份） → **enforcement**（OS 约束） → **fallback**（显式降级）。
+:::
+
 ## 核心不变量
 
 1. **默认拒绝**：没有明确允许的写、网络和敏感读都应失败。
@@ -55,6 +63,10 @@ Reasonix 强调 permitted command still cannot escape the box；DeepSeek Harness
 6. **受保护状态优先**：即使 broad root 覆盖 session/state 路径，也保持只读。
 
 失效边界在于平台能力：Windows 可能只有 partial ACL；macOS 的 sandbox-exec 存在但 `sandbox_apply` 被禁；Linux 旧内核只支持部分 Landlock ABI。系统必须报告 full/partial，而不是假装同等强度。
+
+:::danger
+后端缺失时必须 **fail closed**，绝不能静默裸跑。系统必须报告 full/partial，不能假装同等强度。
+:::
 
 ## 理想模型
 

@@ -29,6 +29,10 @@ review:
 
 Tool Schema 是三方契约：给模型看 name/description/parameters，给 Registry 看执行与并发能力，给治理层看风险与权限。模型输出只是调用意图；只有经过存在性解析、结构校验、语义检查和治理门后，它才成为受控执行请求。
 
+:::note
+模型输出只是**调用意图**。经过解析、校验和治理门后，才成为受控执行请求。
+:::
+
 ## 上一章遗留问题
 
 M-02 说明折叠不能拆散 assistant tool call 与 result。这隐含了两个协议要求：调用必须有可归属 ID，结果必须显式成功或失败。M-03 要回答：工具面如何进入上下文？未知或歧义名称如何处理？Schema 校验通过后为什么还可能被拒绝？
@@ -39,6 +43,10 @@ M-02 说明折叠不能拆散 assistant tool call 与 result。这隐含了两�
 
 Reasonix 用 per-run Registry 分离 provider-visible schema 和 executable tools；DeepSeek Harness 在注册时强制 output contract 并维护 scoped registry；Pi 允许 prepareArguments 兼容旧格式，但最终仍用 TypeBox 校验并让 beforeToolCall 阻断。
 
+:::tip
+三方契约：**模型** 看 name/description/parameters → **Registry** 看执行与并发 → **治理层** 看风险与权限。
+:::
+
 ## 核心不变量
 
 1. **名称可解析**：exact name 优先；别名唯一才可解析，ambiguous 返回候选且不执行。
@@ -48,6 +56,10 @@ Reasonix 用 per-run Registry 分离 provider-visible schema 和 executable tool
 5. **失败是观察**：unknown tool、invalid args、blocked、abort 都生成错误 result，而不是静默消失或抛出未配对异常。
 
 失效边界在于宿主差异：同一工具在不同 provider 上可能支持不同的 Schema 子集；跨进程插件可能注册重复名称；异步 hook 可能在 abort 后返回结果。协议必须在每一层选择保守分支。
+
+:::danger
+安全约束不能只写在 description 里。路径白名单、写入权限、并发规则必须由代码 **fail-closed** 执行。
+:::
 
 ## 理想模型
 

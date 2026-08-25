@@ -27,7 +27,11 @@ review:
 
 ## 一句话结论
 
-工具执行不是“调用函数”，而是把受检意图放进一条可取消、可归属、可审计的管线：先做环境和权限 preflight，再按并发契约派发，捕获结构化元数据和副作用风险，最后把 success/error/blocked/aborted 都规范成 tool observation。执行器的目标不是零失败，而是没有不可解释的失败。
+工具执行不是"调用函数"，而是把受检意图放进一条可取消、可归属、可审计的管线：先做环境和权限 preflight，再按并发契约派发，捕获结构化元数据和副作用风险，最后把 success/error/blocked/aborted 都规范成 tool observation。执行器的目标不是零失败，而是没有不可解释的失败。
+
+:::note
+执行器的目标不是零失败，而是**没有不可解释的失败**。
+:::
 
 ## 上一章遗留问题
 
@@ -39,6 +43,10 @@ M-03 停在治理放行。但放行后仍有问题：路径在校验后是否仍
 
 Reasonix 用 parse → policy → prepare → finish 的单调用管线加 workspace lease；DeepSeek Harness 用 pre-execute/guard/around-dispatch/body/post-execute 的注册表调度；Pi 用 per-file mutation queue 和 process-tree kill。三者共同点是：副作用必须留下结构化证据，取消不能抹掉事实。
 
+:::tip
+执行管线：**preflight**（环境+权限） → **dispatch**（并发契约） → **execute**（捕获元数据） → **observation**（规范化结果）。
+:::
+
 ## 核心不变量
 
 1. **入口唯一**：执行只能来自 registry 调度；模型文本、插件或 UI 不能绕过 preflight 直接 spawn。
@@ -48,6 +56,10 @@ Reasonix 用 parse → policy → prepare → finish 的单调用管线加 works
 5. **观察结构化**：模型可见文本、host/UI 元数据、原始输出分离；失败阶段和 mutation risk 是一等字段。
 
 失效边界在于平台差异：POSIX 可以 detached + process group kill，Windows 进程树语义不同；symlink realpath 在竞态中仍可能被替换。所以边界检查要尽量靠近 write，且失败宁可拒绝。
+
+:::caution
+边界检查要**尽量靠近 write**，且失败宁可拒绝。校验后路径可能仍被替换。
+:::
 
 ## 理想模型
 

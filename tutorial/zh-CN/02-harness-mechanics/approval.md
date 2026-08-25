@@ -29,6 +29,10 @@ review:
 
 审批是在副作用发生前插入的可问责决策点：请求必须携带确切工具输入和风险证据；策略可以先自动放行低风险操作；人工/fresh 决策不能被自动模式吞掉；批准只覆盖声明范围；拒绝、取消和审批通道不可用都要变成带原因的 error result。没有可用决策者时，正确答案是失败关闭。
 
+:::note
+没有可用决策者时，正确答案是**失败关闭**（fail closed），而不是默认允许。
+:::
+
 ## 上一章遗留问题
 
 M-05 让结果可信，但有些动作一旦执行就无法用“结果说明”弥补：删除分支、发布包、扩展写目录、修改受保护配置。M-06 回答：谁在哪个阶段决定？等待用户时 Run 如何阻塞与取消？“不允许”如何回到模型？
@@ -43,6 +47,10 @@ M-05 让结果可信，但有些动作一旦执行就无法用“结果说明”
 
 Reasonix 用 approval manager 和 fresh/human 标记解决自动模式与关键确认冲突；DeepSeek Harness 把 ask 映射为 allowed-once/rejected/cancelled/unavailable 四种结果；Pi 用 before-call hook 的 block/reason/terminate 提供宿主策略接缝。
 
+:::tip
+审批系统必须在三个维度同时收敛：**风险粒度**、**授权范围**、**失败语义**。
+:::
+
 ## 核心不变量
 
 1. **未决即不执行**：审批返回前，目标副作用不得开始；已开始的无关副作用另行记录。
@@ -53,6 +61,10 @@ Reasonix 用 approval manager 和 fresh/human 标记解决自动模式与关键�
 6. **deny 可组合**：任何 guard/policy 可以拒绝；没有任何机制能 force-allow 另一个层已经拒绝的调用。
 
 失效边界在于异步世界：用户看到卡片后 session 可能切换，approval 服务可能卸载，context 可能先取消。实现必须在 resolve 时再次校验 pending 状态，而不是相信旧 ID 永远有效。
+
+:::caution
+实现必须在 resolve 时**再次校验 pending 状态**，而不是相信旧 ID 永远有效。异步世界中用户可能切换 session、服务可能卸载、context 可能先取消。
+:::
 
 ## 理想模型
 
@@ -129,6 +141,10 @@ sequenceDiagram
 - opaque bash/MCP 无法证明只读；
 - 连续 blocked 后仍尝试类似调用。
 
+:::note
+判断标准：如果这个动作出错后**无法用结果说明弥补**，就应该问人。
+:::
+
 ### 什么可以自动放行
 
 满足全部条件才考虑：
@@ -177,6 +193,10 @@ signal         取消传播
 
 普通 policy hook 可以 deny；某些框架允许 hook auto-allow，但 fresh-human 决策必须忽略其 allow。这样插件无法替用户批准拆墙，而拒绝始终安全。
 
+:::danger
+插件**永远不能替用户批准** fresh/requireHuman 的决策。deny 始终生效；allow 对关键决策无效。
+:::
+
 ### 5. 拒绝观察的设计
 
 最小内容：
@@ -190,7 +210,11 @@ next_action_hint（修改方案 / 请求扩权 / 停止）
 audit_id
 ```
 
-不要把完整内部堆栈给模型；也不要只说 “failed”，否则它会重试同样动作。
+不要把完整内部堆栈给模型；也不要只说 "failed"，否则它会重试同样动作。
+
+:::note
+拒绝观察的设计原则：给模型**足够信息调整下一步**，但**不暴露内部实现细节**。
+:::
 
 ## 反例与故障模式
 

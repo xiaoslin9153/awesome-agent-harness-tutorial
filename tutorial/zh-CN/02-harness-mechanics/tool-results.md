@@ -27,7 +27,11 @@ review:
 
 ## 一句话结论
 
-工具结果必须分三层：完整原始证据留在本地或 canonical log；host/UI 使用结构化元数据；模型只接收有界、稳定、带截断标记和取回引用的投影。截断不是隐藏失败，而是重新选择决策面——成功仍是成功，错误仍是错误，省略处必须有“从哪里拿回”的路径。
+工具结果必须分三层：完整原始证据留在本地或 canonical log；host/UI 使用结构化元数据；模型只接收有界、稳定、带截断标记和取回引用的投影。截断不是隐藏失败，而是重新选择决策面——成功仍是成功，错误仍是错误，省略处必须有"从哪里拿回"的路径。
+
+:::note
+截断不是隐藏失败，而是**重新选择决策面**。成功仍是成功，错误仍是错误。
+:::
 
 ## 上一章遗留问题
 
@@ -39,6 +43,10 @@ M-04 已经把 success/error/cancelled/blocked 规范成结构化观察，但输
 
 Reasonix 用 32KiB 稳定 Content 加 RawContent 分页和 tool-aware snip strategy；DeepSeek Harness 在 registry 中校验 output schema 后才渲染 model content；Pi 用流式 OutputAccumulator 保留 tail 并把 full output 写入 temp file。
 
+:::tip
+三层分离：**raw evidence**（完整原始） → **structured meta**（host/UI） → **bounded projection**（模型可见）。
+:::
+
 ## 核心不变量
 
 1. **证据先行**：截断前确定完整输出是否已保存或可在权威层重建；不能先丢后想。
@@ -48,6 +56,10 @@ Reasonix 用 32KiB 稳定 Content 加 RawContent 分页和 tool-aware snip strat
 5. **契约校验**：canonical output 先过 schema，再 render 成模型内容和 presentation meta；render 错误转成工具错误而不是污染历史。
 
 失效边界在于存储生命周期：temp file 可能被清理，RawContent 只在当前 Session 可用，跨进程恢复依赖 checkpoint。因此 marker 要尽量让读者知道证据在哪一层，而不承诺永久存在。
+
+:::caution
+marker 要让读者知道**证据在哪一层**，但不承诺永久存在。temp file 可能被清理。
+:::
 
 ## 理想模型
 

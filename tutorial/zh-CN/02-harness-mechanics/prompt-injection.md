@@ -27,7 +27,11 @@ review:
 
 ## 一句话结论
 
-Prompt Injection 不是“模型被骗”的措辞问题，而是权限问题。防御假设是：任何进入 context 的外部文本都可能试图改写目标。因此任务意图必须通过可信通道传递并分类，普通数据只能作为资料渲染；真正决定安全的是 schema 校验、policy/guard、审批、路径边界和沙箱——即使模型完全服从注入，这些层也要让它无法完成危险副作用。
+Prompt Injection 不是"模型被骗"的措辞问题，而是权限问题。防御假设是：任何进入 context 的外部文本都可能试图改写目标。因此任务意图必须通过可信通道传递并分类，普通数据只能作为资料渲染；真正决定安全的是 schema 校验、policy/guard、审批、路径边界和沙箱——即使模型完全服从注入，这些层也要让它无法完成危险副作用。
+
+:::note
+防御假设：**任何进入 context 的外部文本都可能试图改写目标**。这不是措辞问题，是权限问题。
+:::
 
 ## 上一章遗留问题
 
@@ -45,6 +49,10 @@ Agent 的价值在于读外部世界，风险也在于此外部世界可能携�
 
 Reasonix 用 `ClassifierTaskText` 防止 host framing 被当成任务意图，用 `SubagentHostDecisionBoundaryNotice` 防止子结果伪装用户决定；DeepSeek Harness 用 monotonic guards 保证注入内容无法 force-allow；Pi 把 hook 放在 validated args 之后，保证策略看到的是结构化参数而非自由文本。
 
+:::tip
+分层防御：**intent channel**（可信通道） → **data framing**（资料标记） → **decision boundary**（宿主决定） → **enforcement**（执行前拒绝）。
+:::
+
 ## 核心不变量
 
 1. **信任分级**：system/instruction > host task channel > user message > project files > tool results > web content。
@@ -54,7 +62,15 @@ Reasonix 用 `ClassifierTaskText` 防止 host framing 被当成任务意图，�
 5. **警告不是防线**：danger patterns 只是 UI 提示，真正的 enforcement 是 policy rules 与沙箱。
 6. **失败关闭**：分类失败、来源不明、schema 不匹配时拒绝动作并记录。
 
-失效边界在于语义攻击：内容不请求权限，而是诱导模型写出合法但有害的方案（如删除“无用”文件）。这需要 review/approval 层和评测样本兜底，单靠代码模式无法穷尽。
+失效边界在于语义攻击：内容不请求权限，而是诱导模型写出合法但有害的方案（如删除"无用"文件）。这需要 review/approval 层和评测样本兜底，单靠代码模式无法穷尽。
+
+:::danger
+警告不是防线。**真正的 enforcement 是 policy rules 与沙箱**，不是 UI 提示。
+:::
+
+:::caution
+语义攻击不请求权限，而是诱导模型写出合法但有害的方案。这需要 review/approval 层和评测样本兜底。
+:::
 
 ## 理想模型
 
