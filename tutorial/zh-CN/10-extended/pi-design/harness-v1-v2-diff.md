@@ -1,6 +1,6 @@
 ---
 title: Pi AgentHarness v1 与 v2 设计差异对比
-description: 对比 Pi AgentHarness v1（寄存器模型）和 v2（记录日志模型）的架构差异，理解为什么重新设计以及各自的取舍。
+description: 通过同一个崩溃场景分别走一遍 v1 和 v2 的处理流程，逐维度对比两种持久化策略的设计取舍。
 lang: zh-CN
 content_status: draft
 source_version: 2026-08-25
@@ -10,165 +10,243 @@ source_url_v2: https://github.com/earendil-works/pi/blob/harness-v2/j4/packages/
 
 # Pi AgentHarness v1 与 v2 设计差异对比
 
-Pi 的 AgentHarness 有两个版本的设计文档。v1（`main` 分支）约 2941 行，v2（`harness-v2` 分支）约 3446 行。两者解决同一个问题——**崩溃安全的持久化 Agent 运行时**——但用了截然不同的架构。
+两个版本解决同一个问题——崩溃安全的持久化 Agent 运行时——但用了截然不同的状态管理策略。这篇文章用同一个场景分别走一遍两个版本的处理流程，然后逐维度对比。
 
-这篇文章逐维度对比两个版本，帮助你理解设计演化的逻辑。
+## 1. 用同一个场景对比
 
-## 1. 根本差异：状态存储模型
+场景：用户说"删除旧迁移文件"，模型返回一个工具调用 `rm -rf src/old-migrations/`，工具执行到一半进程崩溃。
 
-这是两个版本最核心的区别，所有其他差异都源于此。
+### v1 怎么处理
 
-### v1：寄存器模型
+```text
+TX[ insert e_50 (user message),
+    upsert op.meta/op_9 = { intent: run },
+    upsert op.state/op_9 = { phase: checkpoint, need_assistant } ]
 
+TX[ upsert op.state/op_9 = { phase: assistant effect_pending,
+    responseEntryId: e_51, usageId: u_7 } ]
+
+TX[ insert e_51 (assistant with tool call),
+    insert u_7 (usage),
+    upsert op.state/op_9 = { phase: tools, call_0: planned } ]
+
+TX[ upsert op.tool_args/op_9:s1:0 = { command: "rm -rf ..." },
+    upsert op.state/op_9 = { call_0: effect_pending, replay: "never" } ]
+
+    ...rm -rf 执行中... ← 崩溃！
 ```
-op.state/{operationId} = 完整操作状态（每次转换覆盖）
+
+恢复：
+
+```text
+读 lane.state → currentOperationId: op_9
+读 op.meta    → intent: run
+读 op.state   → call_0: effect_pending, replay: "never"
+读 op.tool_args → { command: "rm -rf ..." }
+
+replay = "never" → 不重新执行
+→ 合成结果 e_52 "interrupted"
+→ 继续下一个调用
 ```
 
-v1 把操作状态保存在一个可覆盖的寄存器中。每次状态转换原子地覆盖整个寄存器。恢复时读这一个寄存器就知道操作进行到哪。
+v1 通过读 `op.state` 寄存器知道确切状态，通过 `op.tool_args` 知道参数，通过 `replay` 声明知道是否可以重试。
+
+### v2 怎么处理
+
+```text
+H   before_run
+R   operation_started (runId = r_1)
+E   user message (e_50)
+R   step_attempt (assistant, attempt=1, resultEntryId=e_51)
+E   assistant message [tool call] (e_51)
+H   before_tool
+R   tool_started (effectiveArgs, resultEntryId=e_52, replay="never")
+    ...rm -rf 执行中... ← 崩溃！
+```
+
+恢复：
+
+```text
+findOpenOperations(main) → r_1（一个打开操作）
+读取 r_1 之后的记录：
+  step_attempt (assistant, attempt=1, resultEntryId=e_51)
+  → e_51 存在 → 步骤完成
+  tool_started (resultEntryId=e_52, replay="never")
+  → e_52 不存在 → 工具未完成
+
+replay = "never" → 不重新执行
+→ 合成结果 e_52 "interrupted"
+→ 继续下一个调用
+```
+
+v2 通过归约记录知道状态：`step_attempt` 的 `resultEntryId` 存在 = 步骤完成；`tool_started` 的 `resultEntryId` 不存在 = 工具未完成。
+
+### 结果相同，路径不同
+
+两个版本最终做出相同的恢复决策。区别在于**怎么知道的**：
+
+- v1：读一个寄存器（`op.state`），状态是显式存储的
+- v2：归约记录（`tool_started` 无结果 = 未完成），状态是推导的
+
+## 2. 状态存储模型对比
+
+### v1：寄存器（覆盖式）
+
+```text
+op.state = { phase: tools, call_0: effect_pending, replay: "never", ... }
+```
+
+每次状态转换**覆盖**整个寄存器。30 轮运行覆盖约 30 次。恢复读最终值。
 
 类比：一个变量，每次赋值替换旧值。
 
-### v2：记录日志模型
+### v2：记录日志（追加式）
 
-```
+```text
 operation_started → step_attempt → tool_started → ...
 ```
 
-v2 不保存"当前状态"。它在 Lane 的操作日志中追加记录，恢复时通过**归约**（reduction）从记录推导状态。
+每个动作追加一条记录。恢复通过归约推导状态。
 
-类比：一个事件溯源系统，状态是所有事件的函数。
+类比：事件溯源，状态是所有事件的函数。
+
+### 为什么从 v1 换到 v2
+
+v1 有一个问题：**状态和存储是两个东西**。
+
+```text
+内存中构造状态 → 序列化 → 写入 op.state 寄存器
+                    ↑
+                这里可能出错
+```
+
+如果序列化有 bug（比如丢了一个字段），寄存器里的状态就不完整。恢复会基于不完整的状态做决策。
+
+v2 消除了这个间隙：
+
+```text
+状态 = 归约(记录)
+```
+
+状态**不是存储的东西**，而是从存储**推导**的东西。写入 bug 只会导致归约结果不符合有效性检查（恢复拒绝），不会导致错误恢复。
 
 :::note
-关键洞察：v2 中**状态被定义为记录的归约**。活跃执行和恢复使用相同的归约函数。不存在"状态和存储不一致"的可能性。
+这是事件溯源的核心优势：状态和存储不可能不一致，因为它们是同一个东西的两个视图。
 :::
 
-### 为什么换
+## 3. 存储层对比
 
-v1 的寄存器模型有一个问题：**状态和存储是两个东西**。`op.state` 保存状态，但如果写入有 bug（比如只写了部分字段），恢复就会基于错误状态继续。v1 通过"完整覆盖"缓解这个问题，但不能消除。
+### v1 的三存储
 
-v2 消除了这个间隙：状态不是存储的东西，而是从存储**推导**的东西。写入 bug 只会导致恢复失败（有效性检查拒绝），不会导致错误恢复。
-
-## 2. 存储层对比
-
-| 维度 | v1 | v2 |
-|---|---|---|
-| 持久形式 | entries + registers + usage ledger | entries + records + facts |
-| 可变状态 | 寄存器（覆盖式） | 无（纯追加） |
-| 操作状态 | `op.state` 寄存器 | 操作日志中的记录序列 |
-| 待处理载荷 | `pending.entry` 寄存器 | 记录内嵌完整载荷 |
-| 成本台账 | `UsageRow`（追加式） | `UsageRecord`（追加式） |
-
-### v1 的三存储不变量
-
-```
+```text
 entries        写一次，追加式
-registers      可覆盖的键值对
+registers      可覆盖的键值对（唯一的可变状态）
 usage ledger   追加式
 ```
 
-每个载荷恰好在一个地方。
+需要支持 upsert 的后端。JSONL 需要快照压缩（清理死掉的旧寄存器行）。SQLite 需要 registers 表。
 
-### v2 的简化
+### v2 的两存储
 
-v2 消除了寄存器。所有持久数据分为：
-
-```
+```text
 entries    会话树（追加式）
 records    操作日志（追加式）
-facts      全局事实（追加式历史，最新者胜）
+facts      全局事实（追加式历史）
 ```
 
-:::tip
-v2 的所有存储都是追加式的。这意味着 JSONL 后端天然工作——不需要快照压缩。SQLite 也不需要寄存器表。
-:::
+全部追加式。JSONL 天然工作——每条记录一行，不需要压缩。SQLite 不需要寄存器表。
 
-## 3. 恢复机制对比
+| 维度 | v1 | v2 |
+|---|---|---|
+| JSONL 压缩 | 需要（清理死寄存器行） | 不需要 |
+| SQLite 表 | entries + registers + usage + branch_index | entries + records + facts |
+| 后端要求 | 必须支持原子 upsert | 只需要原子 append |
+| 死数据 | 寄存器覆盖留下死值（JSONL 中为死字节） | 无死数据（全部是活记录） |
+
+## 4. 恢复机制对比
 
 ### v1：五次点查找
 
-```
-lane.state/{lane}  → currentOperationId
-op.meta/{opId}     → 操作元数据
-op.state/{opId}    → 程序计数器（完整状态）
-lane.leaf/{lane}   → 当前位置
-lane.config/{lane} → 配置
-```
+```text
+lane.state → op.meta → op.state → lane.leaf → lane.config
 
-然后验证状态命名的所有实体。恢复**从不**扫描历史。
+O(1)，常数次查找
+从 op.state 直接读出完整状态
+验证状态引用的实体
+```
 
 ### v2：归约
 
+```text
+findOpenOperations(lane) → 打开操作
+读取操作日志（从 operation_started 开始）
+读取 Lane 自己的条目（从叶子到锚点）
+归约出状态
+
+O(记录数)，通常 10-20 条
+从记录推导状态
+有效性检查拒绝损坏
 ```
-1. findOpenOperations(lane)  → 索引查询，零/一/二个打开操作
-2. 该操作的记录              → 有界读取
-3. 该 Lane 自己的条目        → 从叶子到锚点的路径
 
-归约出：
-  aborting / attempts / tool batch / deferred handle
-  / pending queue / pending writes / ...
-```
-
-:::note
-v1 恢复是 O(1) 的（常数次点查找）。v2 恢复是 O(操作记录数) 的，但记录数有界（一个操作通常产生 10-20 条记录），且索引使查找高效。
-:::
-
-### 恢复优先级
-
-两者的恢复优先级类似但 v2 更精确：
-
-| 优先级 | v1 | v2 |
+| 维度 | v1 | v2 |
 |---|---|---|
-| 1 | 缺失身份 | 缺失初始消息（追加，即使正在中止） |
-| 2 | 正在中止 → 对账 | 正在中止 → 对账 |
-| 3 | effect_pending → 恢复策略 | 未解析工具批次 → 每调用处理 |
-| 4 | — | 延迟句柄 → 兑换 |
-| 5 | — | 终端失败 → 排空并关闭 |
-| 6 | — | 未完成步骤 → 恢复该步骤 |
-| 7 | 检查点继续 | 检查点继续 |
+| 恢复速度 | O(1) | O(记录数)，通常很快 |
+| 状态来源 | 显式存储 | 推导 |
+| 一致性保证 | 依赖写入正确性 | 由定义保证 |
+| 损坏检测 | 验证状态引用 | 有效性检查拒绝 |
 
-## 4. 崩溃安全模型对比
+## 5. 崩溃安全模型对比
 
-### v1：副作用三明治
+### 核心思想相同
 
-```
-TX[ 意图 ]     ← "即将执行 X，输出用 id R 和 U"
-   执行 X      ← 不确定窗口
-TX[ 结算 ]     ← 输出 + 用量 + 下一状态
-```
+两个版本都使用**意图-结果对**：
 
-唯一的不确定区间：意图持久、结算缺失。三条策略覆盖。
-
-### v2：意图-结果对
-
-```
-R  tool_started（意图：参数、结果 id、重放声明）
-   执行工具
-E  tool result（结果：以 provisioned id）
+```text
+副作用前 → 留下意图痕迹
+副作用后 → 留下结果
+崩溃在中间 → 恢复策略处理
 ```
 
-意图被满足当且仅当带 provisioned id 的条目存在。
+### 表达方式不同
 
-两者的核心思想相同：**在副作用前留下持久的意图痕迹**。v2 的改进是把意图从寄存器变为记录，使它成为追加式日志的一部分。
+| 维度 | v1 | v2 |
+|---|---|---|
+| 意图存储 | `op.state` 中的 `effect_pending` | `step_attempt` 或 `tool_started` 记录 |
+| 结果存储 | 条目（以保留 id） | 条目（以 provisioned id） |
+| 判断"已发生" | `op.state` 中的状态字段 | 结果条目是否存在 |
+| 重放声明 | `op.state` 中的 `replay` 字段 | `tool_started` 中的 `replay` 字段 |
+| 参数持久化 | `op.tool_args` 寄存器 | `tool_started` 记录的 `effectiveArgs` |
 
 ### 工具崩溃点对比
 
-| 崩溃点 | v1 恢复 | v2 恢复 |
-|---|---|---|
-| 意图前 | 正常路径 | 正常路径（`before_tool` 重新运行） |
-| 意图后，执行前 | `effect_pending` → 恢复策略 | `tool_started` 无结果 → 重放策略 |
-| 执行中 | 同上 | X3 → 重放安全则重执行，否则合成 |
-| 钩子中断 | 同上 | X4 → 同 X3 |
-| 结果持久后 | 继续，从不重新结算 | X5 → 跳过，处理下一个调用 |
+```text
+v1 的崩溃点（从 op.state 状态推断）：
 
-语义相同，v2 的表述更精确。
+effect_pending + replay=safe   → 重新执行
+effect_pending + replay=never  → 合成 interrupted
+completed                      → 跳过
 
-## 5. 溢出检测对比
+v2 的崩溃点（从记录存在性推断）：
 
-### v1：三种启发式（可靠性递减）
+tool_started 存在，结果不存在，replay=safe  → 重新执行
+tool_started 存在，结果不存在，replay=never → 合成 interrupted
+tool_started 存在，结果存在                 → 跳过
+tool_started 不存在                         → 正常路径（before_tool 重新运行）
+```
 
-1. 适配器报告（`usage.input + usage.cacheRead > contextWindow`）
-2. 错误消息字符串匹配
-3. `length` 低于 `intendedOutputLimit`
+语义相同。v2 的判断更简洁：只需要检查"条目是否存在"。
+
+## 6. 溢出检测对比
+
+### v1：三种启发式
+
+```text
+1. 适配器报告：usage.input + usage.cacheRead > contextWindow
+2. 错误消息匹配：HTTP 错误消息包含上下文限制模式
+3. length 低于 intendedOutputLimit
+```
+
+可靠性递减。错误消息匹配是字符串匹配，脆弱。
 
 ### v2：精确算法
 
@@ -180,24 +258,27 @@ function isRecoverableLength(message, desiredMaxOutput) {
 }
 ```
 
-关键改进：`desiredMaxOutput` 是**调用者意图的限制**（在任何上下文截断之前）。v1 的 `intendedOutputLimit` 语义相同但文档没有强调"不能使用实际发送的值"这一点。
+一个函数，明确的判断条件。`desiredMaxOutput` 是调用者意图的限制（截断前）。
+
+:::tip
+v2 的改进不是算法更复杂，而是**把模糊的启发式变成了明确的规则**。这使测试可以直接覆盖每个分支。
+:::
 
 两者都有"每次输入一次溢出恢复"守卫。
 
-## 6. 并发控制对比
+## 7. 并发控制对比
 
-### v1：Lane 变更线 + 条件 CAS
-
-v1 引入 Lane 变更线（每 Lane 一个序列化点），同时使用寄存器 `seq` 作为 CAS token：
+### v1：变更线 + CAS
 
 ```text
-条件转换识别它们扩展的状态通过寄存器 seq：
-  op.state seq、lane.state seq、lane.config seq
+Lane 变更线序列化状态依赖的变更
+条件转换用寄存器 seq 做 CAS：
+  "只有 op.state 的 seq 仍然是 X 时才提交"
 ```
 
-### v2：纯 Lane 变更线
+CAS 是为了防御同一进程内的竞争——两个异步操作可能同时读到旧状态然后都尝试提交。
 
-v2 保留 Lane 变更线但**消除了 CAS**：
+### v2：纯变更线
 
 ```ts
 function mutateLane<T>(job: () => Promise<T>): Promise<T> {
@@ -207,107 +288,140 @@ function mutateLane<T>(job: () => Promise<T>): Promise<T> {
 }
 ```
 
-作业 = 验证 → 至多一个持久写入 → 更新内存。
+不需要 CAS。因为：
+1. 变更线保证一次只有一个作业运行
+2. 存储层保证单写者
+3. 每个作业在自己的内部重新验证
 
-:::tip
-v2 不需要 CAS 因为存储层保证单写者。v1 的 CAS 是为了防御同一进程内的竞争，v2 用变更线完全序列化了这些竞争。
-:::
+| 维度 | v1 | v2 |
+|---|---|---|
+| 序列化 | 变更线 | 变更线（相同） |
+| 条件提交 | CAS（寄存器 seq） | 不需要 |
+| 竞争历史 | 恰好两种 | 恰好两种 |
+| 实现复杂度 | 变更线 + CAS 逻辑 | 纯 promise 链 |
 
-两者都保证：每 Lane 的竞争恰好有两种可能历史。
+## 8. 延迟请求对比
 
-## 7. 延迟请求（Deferred）对比
+### v1：状态机中的 deferred 阶段
 
-### v1：状态机中的 `deferred` 阶段
-
+```text
+op.state 的 phase 变为 deferred{suspended}
+resume() → 轮询 → effect_pending → fetch → pending/ready/error
 ```
-assistant effect_pending
-  → stopReason "deferred"
-  → deferred{suspended, sourceEntryId, poll: 0}
-  → resume() → 轮询
-  → effect_pending → fetch → pending/ready/error
-```
 
-轮询状态在 `op.state` 中维护。
+轮询状态在 `op.state` 中维护。有 `poll` 计数器。
 
-### v2：持久化句柄 + 兑换
+### v2：持久化句柄 + 归约发现
 
-```
-R  step_attempt（助手步骤）
-E  assistant message（stopReason deferred，携带句柄）
+```text
+E  assistant message (stopReason=deferred，携带句柄)
    Lane 挂起
-   ... 可能是不同进程 ...
-   resume() → 最新条目是 deferred 且无后继 → 兑换
-   fetchDeferred(model, handle)
-E  assistant message（真实结果）
+   resume() → 归约发现"最新条目是 deferred 且无后继" → 兑换
 ```
 
-句柄保存在持久化的助手条目中。恢复通过归约发现它（最新条目是 deferred 且无后继）。
+句柄保存在持久化的助手条目中。不需要特殊的状态标记。
 
-关键改进：v2 的挂起 Lane 在存储中与崩溃 Lane **不可区分**。不需要特殊的状态标记。恢复统一处理。
+关键改进：v2 的挂起 Lane 在存储中与崩溃 Lane **不可区分**。不需要特殊状态。恢复统一处理。
 
-## 8. Schema 演化对比
+## 9. Schema 演化对比
 
-### v1：storageVersion + 打开时迁移
+### v1：完备迁移
 
+```text
+storageVersion 1 → 2 → 3
+
+每次版本变更：
+  转换所有寄存器值（包括打开操作的 op.state）
+  每步一个事务
+  迁移必须是完备的（翻译每个可达状态）
 ```
-version < current → 链式迁移（每步一个事务）
-version > current → 拒绝打开
+
+### v2：不做迁移
+
+```text
+兼容性策略：旧 v3 JSONL 必须打开并恢复为空闲。
+所有其他格式和 API 可能破坏。
+我们不编写迁移。
 ```
 
-迁移必须是**完备的**——翻译每个寄存器值，包括打开操作的 `op.state`。
+v2 的赌注：记录是追加式的，旧格式可以和新格式共存（旧记录被归约忽略），不需要转换。
 
-### v2：兼容性策略
+| 维度 | v1 | v2 |
+|---|---|---|
+| 迁移需求 | 每次版本变更需要 | 不需要 |
+| 数据安全 | 迁移保证不丢失 | 旧数据可能被忽略 |
+| 实现成本 | 高（写迁移代码） | 零 |
+| 适用场景 | 格式频繁变化 | 格式稳定或可丢弃旧数据 |
 
-> 旧的 coding-agent v3 JSONL 会话必须打开并恢复为空闲。这是唯一的向后兼容要求。所有其他格式和 API 可能破坏。我们不编写迁移。
+## 10. 测试策略对比
 
-v2 采用了更激进的策略：**不做迁移**。因为记录是追加式的，旧格式可以和新格式共存（旧记录被忽略），不需要转换。
+| 维度 | v1 | v2 |
+|---|---|---|
+| Tier A | 每个状态：构造→关闭→重开→断言 | 每个崩溃状态：预填充→打开→resume→断言 |
+| Tier B | 插装 Storage.commit() | 插装 Session（记录 E/R/L/G/H） |
+| Tier C | 手动驱动 + 手工枚举竞争 | 手动驱动 + 机械派生崩溃点 |
 
-:::caution
-这是一个取舍：v1 的迁移机制更安全（不丢失数据），v2 的策略更简单（不需要维护迁移代码）。v2 赌的是格式变化不频繁，且旧数据可以通过 Fork 保留。
+v2 的关键改进：
+
+```text
+崩溃点从追踪机械派生：
+  对每个追踪，在每个 executeAction() 后快照后端
+  → 重新打开每个快照并 resume()
+  → 每个快照运行恢复两次（证明半完成恢复安全）
+
+新副作用添加到追踪 → 自动获得崩溃覆盖
+```
+
+v1 需要手工枚举每个崩溃位置。v2 从追踪自动生成。
+
+## 11. 什么时候选择哪种模型
+
+### 偏向寄存器模型（v1 风格）
+
+- 恢复性能至关重要（O(1) 点查找）
+- 状态转换数量少且稳定
+- 需要支持不支持追加语义的存储后端
+- 团队更熟悉状态机编程
+
+### 偏向记录日志模型（v2 风格）
+
+- 状态一致性是最优先考虑
+- 存储后端只支持追加（如纯 JSONL、事件存储）
+- 需要机械化的崩溃测试覆盖
+- 格式可能演化，不想维护迁移代码
+- 团队熟悉事件溯源
+
+### 实际建议
+
+:::note
+对于大多数 Agent Harness 项目，**v2 的记录日志模型是更好的选择**。原因：
+
+1. 状态一致性由定义保证，不依赖写入正确性
+2. 追加式存储更简单，更多后端支持
+3. 机械崩溃覆盖比手工枚举更可靠
+4. 恢复性能差异在实践中可忽略（一个操作的记录数通常 < 20）
+
+只有当你有极端的恢复性能要求（比如每秒恢复数千个操作）时，寄存器模型的 O(1) 恢复才有意义。
 :::
 
-## 9. 测试策略对比
+## 12. 总结：设计演化的逻辑
 
-两者都使用三层测试，但 v2 更精确：
+```text
+v1 的洞察：
+  "把操作状态存到一个寄存器里，恢复时读它"
+  → 简单、快速、可理解
 
-| 层 | v1 | v2 |
-|---|---|---|
-| Tier A | 每个状态：构造→关闭→重开→断言 | 每个崩溃状态：预填充记录→打开→resume→断言 |
-| Tier B | 插装存储装饰器记录写入顺序 | 插装 Session 记录 E/R/L/G/H 顺序 |
-| Tier C | 每个竞争的两种顺序，手动驱动 | 同 v1 + 机械派生崩溃点 + 双重恢复 |
+v1 的问题：
+  "状态和存储是两个东西，写入可能出错"
+  → 需要信任写入的正确性
 
-v2 的关键改进：**崩溃点从追踪机械派生**，不是手工挑选。新副作用添加到追踪后自动获得崩溃覆盖。每个快照运行恢复两次，证明半完成恢复安全。
+v2 的洞察：
+  "状态不是存储的东西，而是从存储推导的东西"
+  → 状态和存储由定义一致
 
-## 10. 总结
+v2 的代价：
+  "恢复需要扫描记录而不是读一个寄存器"
+  → 但记录数有界，且索引使它足够快
+```
 
-### 保留不变的核心思想
-
-两个版本共享这些设计原则：
-
-1. **意图-结果对**：副作用前写意图，副作用后写结果
-2. **追加式上下文**：provider 上下文只在尾部增长
-3. **Lane 变更线**：每 Lane 的竞争恰好两种历史
-4. **信号所有权**：只有 Harness 能拉取 AbortSignal
-5. **成本独立于编排**：失败尝试的成本也记录
-6. **三层测试**：状态、写者、竞争分别验证
-7. **无回滚**：中止不是回滚，已发生的副作用保留
-
-### v2 的核心改进
-
-| 改进 | 从 | 到 |
-|---|---|---|
-| 状态模型 | 寄存器覆盖 | 记录日志归约 |
-| 状态一致性 | 状态和存储分离 | 状态 = 记录的归约 |
-| 存储层 | 三种（entries + registers + ledger） | 两种（entries + records） |
-| JSONL 后端 | 需要快照压缩 | 天然追加 |
-| 崩溃点目录 | 隐含在状态机中 | `fx` 方法列表显式枚举 |
-| 溢出检测 | 三种启发式 | 精确算法 |
-| 延迟请求 | 状态机阶段 | 持久化句柄 + 归约发现 |
-| Schema 演化 | 完备迁移 | 不做迁移 |
-| 崩溃测试覆盖 | 手工枚举 | 机械派生 |
-
-### 什么时候读哪个版本
-
-- **学习持久化 Agent 运行时的设计思想**：读 v1。它的寄存器模型更直观，"程序计数器"的比喻容易理解。
- - **理解 Pi 的最新实现方向**：读 v2。它是实际要实现的版本。
- - **对比两种持久化策略**：两个都读。寄存器 vs 记录日志是持久执行系统的两种经典范式。
+这是一个从**命令式**（存储状态，覆盖更新）到**声明式**（存储事件，推导状态）的演化。和编程语言从命令式到函数式的演化类似——牺牲一点性能，换取正确性保证。
