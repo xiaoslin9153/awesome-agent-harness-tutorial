@@ -389,3 +389,315 @@ Harness 写的 `usage` 记录总是将其 `entryId` 绑定到其测量所属条�
 - `tool_started.toolIndex` 未识别其原始助手条目中存储的 `toolCallId` 和 `toolName`；
 - 两条 `tool_started` 记录共享一个调用身份；
 - provisioned id 以不同内容存在。
+
+## 6. 每个动作写什么
+
+存储级别的追踪。所有追踪显示一个 Lane。图例：
+
+```text
+E   追加到树的条目（链接到 Lane 的叶子）
+R   追加到 Lane 操作日志的记录
+L   Lane 指针移动
+G   全局事实写入
+H   钩子（被等待；钩子是第一部分概念，其 API 在第三部分）
+X   崩溃点
+```
+
+### 带一个工具调用的运行
+
+```text
+    prompt("修复 bug")
+H   before_run                        可以注入条目、覆盖 system prompt
+R   operation_started                 kind run；带 provisioned id 的初始消息
+E   user message                      意图中 provisioned 的 id
+R   step_attempt                      step assistant, attempt 1
+E   assistant message [tool call]
+H   before_tool                       可以更改参数或阻止
+R   tool_started                      有效参数、provisioned 结果 id、重放
+H   after_tool                        可以修补结果和终止
+E   tool result                       provisioned 的结果 id；持久化 terminate 决策
+R   step_attempt                      下一回合的助手步骤, attempt 1
+E   assistant message "done"
+H   before_run_end                    没有待处理，返回空
+R   operation_finished                completed
+```
+
+任何两行之间的崩溃都是可恢复的。一般规则：没有其结果条目的意图由恢复完成、重试或以合成结果关闭；没有已消耗意图的结果条目不能存在。
+
+### 重试
+
+```text
+R   step_attempt                      attempt 1
+    请求失败
+R   usage                             失败尝试的成本 — 从不丢失
+R   step_attempt                      attempt 2 — 持久计数
+R   usage
+E   assistant message
+```
+
+每个 provider 请求以 `usage` 记录结算（第 5 节）；其他追踪为简洁省略它们。每请求钩子（`transform_context`、`before_request`、`after_response`）在每次请求内运行且到处省略；Tier B 记录它们（第 19 节）。
+
+退避期间崩溃：恢复计数两次尝试；恢复从 attempt 3 开始。计数从不重置。上限以下可重试错误从不作为条目追加。尝试耗尽 — 或不可重试的终端错误 — 追加带错误的助手消息，然后 `operation_finished` failed：
+
+```text
+E   assistant message                 stop reason error；失败是持久的
+X   crash                             操作仍然打开
+R   operation_finished                恢复写入 failed — 从不 completed
+```
+
+错误条目是终端失败标记。发现它的恢复排空已接受的写入和排队输入；除非已消耗的 steering 或 follow-up 输入开始新工作，它以 failed 关闭运行（第 7 节）。最新自己消息是步骤产生的错误的运行永远不能被恢复完成。
+
+### 助手步骤的上下文溢出
+
+`length` 是歧义的：生成在某个输出边界停止，但该边界要么是预期的输出限制 — 压缩无帮助 — 要么是更小的上下文或 provider 限制，那里可以有帮助。分类将实际输出用量（包括推理 token）与**预期的**输出上限比较：
+
+```ts
+function isRecoverableLength(message: AssistantMessage, desiredMaxOutput: number): boolean {
+  if (message.stopReason !== "length") return false;
+  // 达到调用者或模型的预期上限是真正的输出限制停止。
+  if (desiredMaxOutput > 0 && message.usage.output >= desiredMaxOutput) return false;
+  // 低于预期上限停止：上下文压力或 provider 侧截断。
+  return true;
+}
+```
+
+`desiredMaxOutput` 是调用者提供的 `maxTokens`（设置时），否则 `model.maxTokens` — 在任何上下文截断**之前**的预期限制。实际发送的值永远不能作为参考：某些 provider 完全拒绝显式输出上限（OpenAI Codex 后端对 `max_output_tokens` 返回 HTTP 400），而 Pi 将其他限制截断到剩余上下文。这覆盖了上下文截断的请求返回 16 个推理 token 而意图是 128k（恢复）、小米/Qwen 风格的零输出 `length`（恢复）以及完全用尽的显式 1,024 上限（真正停止）— 没有上下文百分比启发式。溢出形式的错误 — 匹配溢出模式的 provider 拒绝，或 prompt 超过窗口的静默成功 — 以相同方式分类并走相同路径。
+
+可恢复的响应被**丢弃**：像可重试错误一样，它从不成为条目，所以重试时不需要从上下文中清除任何东西，无论是活跃还是崩溃后。其 provisioned 结果 id 保持未满足；其成本已经在请求结算时写入的 `usage` 记录中持久化（第 5 节）。
+
+```text
+R   step_attempt                      step assistant, attempt 1
+    响应：可恢复                       低于预期上限的 length，或溢出形式错误
+R   usage                             被丢弃响应的成本 — 从不丢失
+    没有其他追加                       响应本身被丢弃
+H   before_compaction                 reason overflow
+R   step_attempt                      step compaction, attempt 1
+E   compaction entry
+R   step_attempt                      step assistant, attempt 1 — 新步骤
+E   assistant message
+```
+
+**每次会话输入一次恢复。** 溢出压缩只有在没有溢出原因的压缩 `step_attempt` 比此运行最新的已消耗会话消息（prompt、steering 或 follow-up）更新时才可能开始。该窗口内的第二次可恢复响应追加放弃错误条目并通过排空路径失败运行 — `length` 响应从不重置守卫；只有已消耗的会话输入会重置。这将压缩并重试循环限制在每次用户操作一次尝试。原因 `overflow` 的 `before_compaction` 拒绝或空压缩准备同样是终端的：没有压缩请求就无法容纳。钩子提供的溢出压缩在条目之前写入其压缩 `step_attempt` 使守卫计算它 — 这是写入尝试记录的唯一钩子提供的摘要。
+
+每个崩溃点：
+
+| 崩溃之后 | 持久状态 | 恢复 |
+|---|---|---|
+| `step_attempt`（assistant） | 未完成的助手步骤 | 恢复重试；可恢复的响应再次活跃分类 |
+| `step_attempt`（compaction, overflow） | 未完成的压缩步骤 | 以记录的原因恢复压缩步骤 |
+| 压缩条目 | 步骤被其条目关闭 | 检查点路径；新的助手步骤跟随 |
+
+真正的 `length` 停止 — 输出达到预期上限 — 被追加并像之前一样处理：带工具调用时，截断的批次在不执行的情况下使每个调用失败；不带时，运行继续其正常完成。任何截断响应用户可见的措辞保持中性（"响应在完成前被截断"）而不是声称达到了配置的输出限制。
+
+### 工具运行时的 steering
+
+```text
+E   assistant message [tool call]
+R   tool_started
+    steer("专注于测试")                调用者在此解析
+R   queue_enqueued                    steer，完整载荷，provisioned id
+E   tool result
+E   user message                      检查点消耗队列项；provisioned id
+R   step_attempt                      下一个请求看到 steering 消息
+```
+
+`queue_enqueued` 之前崩溃：steer 从未发生；调用者的 promise 从未解析。之后崩溃：恢复发现没有其条目的记录并在检查点本会追加的同一点追加它。
+
+排队的项可以在消耗前被持久撤回：
+
+```text
+R   queue_enqueued                    steer，完整载荷，provisioned id
+    cancelQueued(entryId)             调用者在此解析
+R   queue_cancelled                   条目将从不被追加
+```
+
+两条记录之间崩溃：项仍待处理；取消 promise 从未解析。取消和消耗是 Lane 变更线上的作业，所以 `[cancel, consume]` 和 `[consume, cancel]` 是唯一的历史（第 15 节）。
+
+### 完成边界的输入
+
+同 Lane 决策有一个顺序：Lane 变更线（第 15 节）。最终待处理工作检查和终端追加是一个 `tryFinishRun` 变更，所以并发 steer 恰好有两种历史：
+
+```text
+steer 优先                           finish 优先
+R   queue_enqueued                  R   operation_finished
+    tryFinishRun → continue             steer() → NoActiveRun
+E   user message
+... 运行继续
+R   operation_finished
+```
+
+延迟写入和中止使用相同排序。完成前接受的延迟写入必须在运行可以关闭之前应用；完成后接受的延迟写入观察空闲 Lane 并直接追加。完成前的 `abort_requested` 选择中止对账；完成后的中止返回 `NoActiveOperation`。没有第三种历史 — 这就是整个机制。
+
+### 回合中途的延迟写入
+
+```text
+R   step_attempt                      请求飞行中，上下文结束在用户消息 U
+    session.appendMessage(M)          调用者在此解析
+R   write_deferred                    完整载荷，provisioned id
+E   assistant message A               provider 缓存了 [.., U, A]
+E   message M                         检查点应用写入；尾部追加
+```
+
+直接追加 M 会产生 [.., U, M, A]：一个有效的 provider 序列，使 KV 缓存从 M 起失效，以及一个声称 A 看到 M（实际没有）的 transcript。检查点阻止两者（追加式上下文，第 4 节）。
+
+### 工具执行期间的中止
+
+```text
+E   assistant message [tool call]
+R   tool_started
+    abort()                           调用者在此解析
+R   abort_requested                   steer/follow-up 队列死亡；载荷返回
+E   tool result                       合成 "interrupted"，或完成时的真实结果
+E   assistant message                 关闭消息，stop reason aborted
+R   operation_finished                aborted
+```
+
+`abort_requested` 之后崩溃：恢复完成相同的对账。待处理的延迟写入即使在这里也应用；排队的 steer/follow-up 项不。
+
+### 工具执行崩溃点
+
+```text
+E   assistant message, calls c1, c2
+X1  before before_tool                c1 没有持久的东西
+H   before_tool(c1)
+X2  决策已做，没有写入                  与 X1 相同
+R   tool_started(c1)
+X3  工具执行中
+H   after_tool(c1)
+X4  钩子被中断                          与 X3 相同的持久状态
+E   tool result c1
+X5  结果持久                            c1 完成
+```
+
+| 崩溃点 | 持久状态 | 恢复 |
+|---|---|---|
+| X1, X2 | 无记录，无结果 | 完整正常路径；`before_tool`（再次）运行 |
+| X3, X4 | `tool_started`，无结果 | 重放安全（记录和当前声明）：重新执行持久化参数，对新结果运行 `after_tool`。否则：合成 "interrupted" 结果，无钩子 |
+| X5 | 结果条目存在 | 跳过 c1；c2 在 X1 |
+
+对账按源顺序在各自的崩溃点处理批次的每个调用。步骤然后正常结束。
+
+### 检查点处的自动压缩
+
+```text
+E   tool result                       步骤结束
+    检查点：下一个请求不适合
+H   before_compaction                 可以拒绝或提供摘要
+R   step_attempt                      step compaction — 钩子提供时跳过
+E   compaction entry
+R   step_attempt                      step assistant；运行在压缩后的上下文上继续
+```
+
+自动压缩不写 `operation_started`；它属于运行。手动 `compact()` 是自己的操作：`operation_started`（kind compaction，provisioned 结果 id）→ 钩子 → 尝试 → 压缩条目 → `operation_finished`。
+
+### 导航
+
+```text
+    navigateTree(target, { summarize: true, label: "before-refactor" })
+R   operation_started                 kind navigation；目标、provisioned 摘要 id、标签
+H   before_navigation                 可以拒绝或提供摘要
+R   step_attempt                      step branch_summary — 钩子提供时跳过
+    摘要文本生成                        仅在内存中
+L   lane move → target                一个存储写入；提交点
+E   branch summary entry              追加链接到 Lane 的叶子 — 现在是目标，
+                                      所以摘要落在目标分支上
+G   label                             来自意图；最新者胜，幂等
+```
+
+移动先提交；每个后续写入从持久状态链出。设计中任何地方都不存在多对象原子写入。接受拒绝 `target === sourceLeafId`，所以"移动是否已发生"总是可判定的：Lane 的叶子等于 `intent.targetId` 当且仅当移动已提交。每个崩溃点：
+
+| 崩溃之后 | 恢复看到 | 动作 |
+|---|---|---|
+| `operation_started` | 叶子在 `sourceLeafId` | 重新运行钩子或摘要步骤，然后移动 |
+| 摘要已生成 | 没有文本的持久内容 | 在相同的尝试上限下重新生成 |
+| Lane 移动 | 叶子在 `intent.targetId` | 如果 `summaryEntryId` 缺失则追加摘要 |
+| 摘要条目 | 条目存在 | 设置标签，完成 |
+| 标签 | 事实已设置（幂等） | 完成 |
+
+移动和 `operation_finished` 之间，读者看到 Lane 在目标处且有打开的导航 — 一个可恢复状态，不是无效状态。Lane 期间不运行任何其他东西；每 Lane 一个操作已经保证了这一点。
+
+### 延迟 provider 请求
+
+```text
+R   step_attempt                      流选项请求延迟执行
+E   assistant message                 stop reason deferred，携带句柄
+    Lane 挂起；prompt() 以结果 "suspended" 解析
+    ... 数小时过去，可能是不同的进程 ...
+    resume()                          Lane 路径上最新的条目是延迟
+                                      助手消息且无后继
+                                      → 句柄未兑换，兑换它
+    fetchDeferred(model, handle)      模型和句柄来自该条目
+E   assistant message                 真实结果
+    运行正常继续
+```
+
+挂起的 Lane 在存储中与崩溃的不可区分：一个打开的操作，其最新条目是无后继的延迟助手消息。恢复将其列为挂起；`resume()` 检查句柄。兑换不写意图记录：它不开始新的模型工作，且已提交的后继条目阻止另一次获取。
+
+每次 `resume()` 执行一次获取。三种结果：
+
+- **pending** — provider 再次返回停止原因 `deferred`。除了可能的 `usage` 记录外没有写入（第 15 节）；Lane 重新挂起。轮询节奏是应用策略。
+- **ready** — 正常的助手消息。它作为后继追加，运行继续。
+- **terminal** — provider 返回停止原因 `error`（过期、未知、已消费），或 fetch 本身拒绝；Harness 将拒绝转换为相同的错误消息形式。消息被追加，运行以 failed 完成。兑换失败从不开始自动替换请求；已为此运行接受的 steering 或 follow-up 输入仍可以开始以后的回合。
+
+挂起 Lane 上的 `abort()`：`abort_requested` 记录、provider 处句柄的尽力取消，然后正常对账和 `operation_finished` aborted。延迟条目留在 transcript 中。
+
+延迟助手消息携带句柄，不是内容；它们在 provider 上下文中投影为空。
+
+## 7. 恢复
+
+### 恢复（Restore）
+
+打开会话独立恢复每个 Lane。恢复只读取；它从不追加且从不开始副作用。
+
+恢复从索引发现开始，不是完整日志扫描：
+
+1. `findOpenOperations(lane, { limit: 2 })` 以最新优先返回未完成的 `operation_started` 记录。零意味着空闲，一意味着挂起，二意味着损坏。后端必须从重放/索引的操作状态回答；调用者不能只从最新的开始推断。
+2. 对空闲 Lane，一次索引查询找到最新的 run-kind `operation_started`，然后其上过滤的 `queue_enqueued` / `queue_cancelled` 查询重建待处理的 `nextRun` 项。没有先前运行时，相同类型过滤的查询只读运行前队列状态；无关的用量调整从不扫描。
+3. 对挂起的 Lane，打开的操作选择两次有界载荷读取：
+   - **该 Lane 的记录**，从那个 `operation_started` 开始。上一个操作完成之后的一切都是无关历史。
+   - **该 Lane 自己的条目**：从其叶子回到操作的锚点（`sourceLeafId`）的路径。这些恰好是该操作追加的条目。
+
+归约可以额外对 provisioned 条目 id 执行点查找，并在操作锚点处对有效模型、思考和活跃工具配置执行有界分支查找。这些是索引查找，不是额外的历史扫描。每个扫描以打开操作或仍相关的空闲队列为界，不以总会话历史或另一个 Lane 的活动为界。
+
+空闲 Lane 的剩余状态是待处理的 next-run 队列项。Next-run 消息可以在任何时候入队；只有运行的接受消费它们 — 压缩和导航跳过队列。待处理项是 Lane 最近 run-kind `operation_started` 之后其 provisioned 条目不存在且没有被 `queue_cancelled` 撤回的 `queue_enqueued` 记录。运行捕获的项列在其意图的 `initialMessages` 中，所以捕获但未追加的项由该运行的恢复完成，从不提供给下一个运行。
+
+### 归约
+
+从那两次读取，Lane 的状态：
+
+- **正在中止** — 存在 `abort_requested` 记录。
+- **已用尝试** — 最新 `step_attempt`（当其 `resultEntryId` 没有条目时）是未完成的步骤；其 `attempt` 字段是持久计数，其 kind 和 `compactionReason` 选择恢复路径。关闭是点查找，不是邻接推断：步骤恰好在最新尝试的 provisioned 结果存在时关闭。较早尝试的未满足 id 属于已完成的工作，不需要检查。
+- **溢出恢复已用** — 原因 `overflow` 的压缩 `step_attempt` 比此运行最新的已消耗会话消息更新（第 6 节，溢出守卫）。
+- **工具批次** — 带工具调用的最新助手条目，每个调用对照 `tool_started` 记录和结果条目匹配（第 6 节，崩溃点表）。助手停止原因被保留：`length` 批次被截断且在恢复时从不执行。结果条目上持久化的 `terminate` 值决定已完成的批次是否强制另一个回合。
+- **延迟句柄** — 最新自己的条目是无后继的延迟助手消息。
+- **最新自己的条目** — 第二次读取的最后条目；纯谓词（`needsAssistant()`、终端失败、中止关闭）读取它。
+- **待处理队列项** — provisioned 条目不存在的 `queue_enqueued` 记录，排除被 `queue_cancelled` 撤回的项和被此运行 `abort_requested` 杀死的 steer/follow-up 项。
+- **待处理写入** — provisioned 条目不存在的 `write_deferred` 记录。
+- **缺失初始消息** — 运行意图中没有条目的 provisioned id。
+- **结构目标** — 对压缩和导航：provisioned 结果条目是否存在。
+
+相同的规则活跃运行：正常执行期间 harness 在写入时更新内存中的状态；恢复从存储重新计算它。状态和记录不能不一致，因为状态被定义为它们的归约。`usage` 记录在这里不可见：它们是会计，从不是编排。
+
+### 恢复（Resume）
+
+`resume()` 从归约所说的继续打开的操作：
+
+- 缺失初始消息 → 追加它们（被接受的输入从不丢失），即使正在中止。
+- 正在中止 → 对账：合成工具结果、关闭的助手消息、`operation_finished` aborted。
+- 未解析工具批次 → 每调用：跳过、重新执行，或合成（第 6 节）。
+- 延迟句柄 → 兑换（第 6 节）。
+- 终端失败 — 最新自己的消息是步骤产生的助手错误（放弃条目、不可重试的请求错误或失败的兑换；从不是任意的延迟写入消息）→ 应用已接受的写入并消耗排队的会话输入；如果没有消耗开始新工作，追加 `operation_finished` failed。恢复从不完成这样的运行。
+- 未完成步骤 → 在消耗新检查点输入之前恢复那个确切的步骤：上限允许时下一次尝试，否则失败操作。压缩步骤以其记录的 `compactionReason` 恢复。
+- 否则 → 在下一个检查点继续；待处理写入和队列项在那里正常应用。
+
+恢复追加是普通追加，带一条额外规则：跳过任何已存在的 provisioned id。恢复期间的崩溃因此留下更少的待恢复内容；重新运行恢复总是安全的。恢复只在其策略允许时重复未知副作用：可重试步骤开始新的持久尝试，工具只在两个重放声明都说 `safe` 时重放。被中断的钩子处理器遵循第 11 节重放表。
+
+旧的 v3 会话不包含记录。每个 Lane 问题回答"空闲"；第 12 节规范化在被丢弃的事实类条目通过其最近保留祖先解析后，在最终保留的逻辑条目处恢复 `main`。
+
+# 第三部分 — API 与实现
+
+## 8. 公共 API
+
+### Lane 表面
+
+`AgentLane` 是一个 Lane 的操作表面。`AgentHarness` 为 `main` 实现它：`harness.prompt(...)` 是 main 的 prompt。每个方法都是异步的，包括进程内实现从内存回答的 getter：接口必须可由远程代理实现，所以没有签名可以承诺只有本地实现能保持的同步性。同步例外：`name` 和监听器注册（`hooks.on`、`events.on`）— 服务器通过自己的传输桥接事件，不是注册。
