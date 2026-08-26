@@ -1425,3 +1425,1849 @@ class Session implements SessionTree {          // 绑定到 "main"
   // ... Lane 管理（createLane, moveLane, getLanes）...
 }
 ```
+
+## 13. Storage
+
+### 契约
+
+一个存储实例对应一个 session。Storage 负责持久化和回答查询；`Session` 拥有校验和视图绑定。Storage 从不执行操作、维护队列，也不执行恢复。除了被索引的列和恢复所需的未完成操作投影外，record payload 是不透明的。
+
+```ts
+interface SessionStorage {
+  getMetadata(): Promise<SessionMetadata>;
+
+  // Lane
+  getLanes(): Promise<{ lane: string; leafId: string | null }[]>;
+  createLane(lane: string, at: string | null): Promise<void>;
+  moveLane(lane: string, to: string | null): Promise<void>;
+
+  /** Promise resolve 时已经持久化。输入不携带 parentId、seq 或时间戳；
+      三者都由 storage 分配。parentId 是 Lane 当前叶子；条目会在同一个
+      事务中成为该 Lane 的新叶子。调用方不可能传入过期 parent，
+      因为它们从不传 parent。 */
+  appendEntry<T extends Entry>(entry: ProvisionedEntry<T>, lane: string): Promise<T>;
+  appendRecord<T extends LaneRecord>(record: NewRecord<T>): Promise<T>;
+
+  // 读操作
+  getEntry(id: string): Promise<Entry | undefined>;
+  findEntries(query?: EntryQuery): Promise<Entry[]>;
+  /** 这里 start 是必需项；默认取 Lane 叶子只是视图层的糖。 */
+  findEntriesOnBranch(query: EntryQuery & BranchBounds & { start: string }): Promise<Entry[]>;
+  findRecords<K extends LaneRecord["type"]>(
+    query: RecordQuery & { type: K },
+  ): Promise<Extract<LaneRecord, { type: K }>[]>;
+  findRecords(query?: RecordQuery): Promise<LaneRecord[]>;
+  findOpenOperations(lane: string, options?: { limit?: number }): Promise<OperationStartedRecord[]>;
+  getLog(options?): Promise<LogItem[]>;
+
+  // 全局事实
+  getName(): Promise<string | undefined>;      setName(name: string): Promise<void>;
+  getLabel(id: string): Promise<string | undefined>;  setLabel(id, label): Promise<void>;
+  getStats(): Promise<SessionStats>;
+}
+```
+
+所有后端都必须遵守以下契约规则：
+
+- 条目、记录、事实和 lane 移动共享同一个单调递增 `seq`。
+- Storage 线性化同一 session 所有 Lane 的并发写入，并在每次写入的原子提交中分配 `seq`；调用方从不读取、预留或递增序列。写入 promise 按提交顺序 resolve。Lane 变更线（第 15 节）串行化决策；这条规则串行化其下方的写入——两者都需要，谁也不能替代谁。
+- 写入 promise resolve 时即为持久化完成；事件在其后触发。
+- `Session` 和 harness 使用 `session.idGenerator` 分配 id；storage 在追加时强制保证 session 内唯一。
+- 每个持久 payload 必须可 JSON 序列化。`Session` 在分发前校验，因此 Memory、JSONL 和 SQLite 接受相同的值；Memory 不会保留 JSONL 会拒绝的值。
+- 读操作返回不可变数据。
+- `findOpenOperations` 是必需的恢复投影：Memory 用记录状态维护它，JSONL 在回放文件时推导它，SQLite 从 Lane 当前的未完成操作投影回答它。它按最新在前返回未完成的 start，并且当回放或导入型后端观察到多个未完成操作时必须暴露第二个结果，让恢复流程可以拒绝损坏。具备条件性当前状态投影的后端也可以在正常写入 API 中直接拒绝第二个 `operation_started` 追加，而不是制造这种损坏。
+- 不存在通用条件写。单写者加 Lane 变更线使普通追加、指针更新和事实更新不需要 compare-and-set。唯一窄例外是 Lane 未完成操作投影：启动操作会条件性地把该 Lane 的未完成操作从 `null` 设置为 run id，更新失败表示该 Lane 已经忙。
+- 每个 session 一个写者，由服务层强制执行；SQLite 自身也会拒绝第二个写者。这是按 session 划分，而不是按后端划分：一个 SQLite 数据库可以容纳多个 session，每个 session 有自己的单写者。
+- 任何写入失败都会使 harness fault（第 4 节）。存储中留下的是一个有效前缀。
+- 全局事实和 lane 移动历史只追加，从不重写；最新 `seq` 生效。历史是更便宜的实现方式（只插入，不更新），而 lane 移动历史将来也能当作 reflog 使用。
+- 对 format-4 session 来说，`getStats()` 返回的 token 和成本字段是所有 Lane 的 `usage` 记录之和——一条规则、没有按条目推导的账单，也不会重复计数。`messageCount` 统计 session 树中的全部消息条目，包括复制进 fork 的条目。fork 会用复制来的条目初始化计数，然后为新增消息条目递增。后端把两者作为持续投影维护，因此读取和 `usage` 事件的总值都是 O(1)。Format-3 session 没有 record，其 usage 统计仍由条目推导。一次性的 v4 转换会写入一条聚合 `adjustment` 记录（`details: { source: "v3-import" }`），汇总 v3 条目的 usage，所以总量能跨转换保存。台账声明之外仍然存在这些缺口：settle 到写入之间的崩溃窗口、流中未上报的费用、没有上报就死掉的 tool，以及扩展私有的 LLM 调用（第 1 节非目标）——不过 `adjustment` 记录允许应用事后补齐这些数据。
+
+### Memory
+
+Memory 使用普通结构：entry map、record list、lane map、fact list、一个 seq 计数器和一个 session 级写队列。追加时先校验、克隆，在该队列头部分配 `seq`，然后提交；读取时向外克隆。它是参考实现：一致性测试套件首先针对它运行。
+
+### JSONL
+
+具体仓库类型是 `JsonlSessionRepo`。它的 metadata 和 options 扩展了后端中立契约：
+
+```ts
+interface JsonlSessionMetadata extends SessionMetadata {
+  cwd: string;
+  path: string;
+  modifiedAt: number;                 // 文件系统 mtime，用于列表排序
+  sourceFormat: 3 | 4;
+  /** 仅当 v3 父路径尚未解析成 id 时存在。 */
+  legacyParentSessionPath?: string;
+}
+interface JsonlSessionCreateOptions extends SessionCreateOptions {
+  cwd: string;
+  metadata?: Record<string, JsonValue>;
+}
+interface JsonlSessionListOptions { cwd?: string; }
+```
+
+v3 的 `parentSession` 路径在对应文件可用时会解析为父 header 的 id。如果暂时不可用，metadata 保留 `legacyParentSessionPath`；首次写入转换会保留这个可选 header 字段，而不是悄悄丢弃关系。Format-4 代码使用 `parentSessionId` 表示仓库关系。`modifiedAt` 从文件系统读取，不是带序号的 session 变更。
+
+仓库布局与 coding-agent v3 一致。在 `sessionsRoot` 下，每个已解析 cwd 使用名为 `--${resolvedCwd.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--` 的目录。新文件命名为 `${createdAtIso.replace(/[:.]/g, "-")}_${sessionId}.jsonl`。`list({ cwd })` 扫描该 cwd 目录；`list()` 扫描每个直接子目录。列目录只读每个文件的 header 和文件系统 metadata，不打开或回放 session。缺少 header 或格式错误的文件会被排除。首次写入时的 v3 转换原地替换原文件，从不改变目录或文件名。
+
+每个 session 一个文件：一行 header，随后每行一个 JSON 对象，按 `seq` 排序。每个逻辑变更正好是一行；一行就是原子单元。
+
+```text
+{"kind":"header", "version":4, id, createdAt, cwd, parentSessionId?, legacyParentSessionPath?, metadata?}
+{"kind":"entry",  "lane":"main", id, parentId, type, timestamp, ...}  // 追加并推进 main
+{"kind":"entry",  id, parentId, type, timestamp, ...}                    // fork 导入；不推进任何 lane
+{"kind":"record", "lane":"main", id, runId?, type, timestamp, ...}
+{"kind":"lane",   "lane":"slack:t1", "leafId":"e42"}        // 创建或移动
+{"kind":"fact",   "fact":"name",  "name":"Refactor auth"}
+{"kind":"fact",   "fact":"label", "targetId":"e17", "label":"checkpoint"}
+```
+
+- 打开时把整个文件读入内存；所有查询都在这份状态上运行。一个 session 级追加队列串行化来自所有 Lane 的写入，每次写一行；队列分配 `seq`，队列顺序就是行顺序。本节中的每个存储变更正好是一行——设计里没有任何东西需要多行原子写。
+- 仓库不保留创建或打开的 storage 实例。它知道如何定位和加载 session，然后把每个 storage 及其写队列转移给返回的 `Session`。重新打开会加载新的 storage 实例；服务层的单写者所有权规则防止并发以写入模式打开。仓库操作本身不串行化，因此调用方要 await 存在顺序依赖的操作。
+- entry 行上的可选 `lane` 是信封元数据，解码后消失。它存在时，这一行原子地追加条目并推进该 Lane；回放要求 `parentId` 等于当前叶子。它不存在时，这一行导入 fork 条目且不移动 Lane。Entry 暴露 `seq` 但不暴露 lane。
+- 撕裂尾部：最后一行畸形说明那次追加在写入中途死亡。打开时截断它；这次写入从未确认，没有数据丢失。其他位置的畸形行是损坏；打开时拒绝。
+- 持久性级别是进程崩溃级：append promise 已 resolve。这里没有 fsync 承诺；如果未来需要掉电持久性，它会成为显式能力。
+- v3 文件只有 entries，没有 `kind` 标签。打开时按第 12 节构建规范化逻辑树；每个条目属于 `main`，`main` 叶子是最后一个物理条目经过被丢弃条目回溯到的最近保留祖先。第一次 v4 追加之前，文件用 v4 header 重写一次（先写临时文件，再 rename）。这是兼容策略允许的唯一转换。只读打开从不重写。
+
+### SQLite
+
+SQLite 采用全新 schema，并为每个 Lane 持久化一个当前叶子。
+
+```sql
+session_sequences (session_id, next_seq)                    -- 原子 seq 分配器
+entries        (session_id, seq, id, parent_id, type, timestamp, payload)
+records        (session_id, seq, id, lane, run_id, type, op_kind, timestamp, payload)
+lanes          (session_id, lane, leaf_id, open_operation_id) -- 当前指针 + 未完成操作投影
+lane_moves     (session_id, seq, lane, leaf_id)     -- 历史；getLog parity
+facts          (session_id, seq, kind, key, value)  -- 名称、标签；最新 seq 生效
+branch_entries (session_id, branch_id, entry_id, entry_seq, entry_type, custom_type)
+branch_tips    (session_id, branch_id, tip_id)      -- PRIMARY KEY (session_id, tip_id)
+writer_leases (session_id, owner_id, fence, expires_at_ms)  -- 写者租约
+
+-- 索引
+records(lane, type, seq); records(lane, type, op_kind, seq);
+branch_entries(entry_id)                                  -- 反向查找：entry → branch
+```
+
+`writer_leases` 通过带过期时间的 fenced claim 强制每个 session 只有一个写者。Storage 在每次写事务中和空闲期间续租。仓库拥有的清理进程只释放匹配的 owner 和 fence。
+
+`open()` 获取写者租约。`list()` 从不获取或续租：它直接从 session catalog 读取所有匹配 session，并把最新的 name fact 投影到顶层 `SqliteSessionMetadata.name` 字段，供服务端盘点使用。应用拥有的 `SqliteSessionMetadata.metadata` 保持不变。
+
+`branch_entries` 和 `branch_tips` 是私有读缓存。接口不暴露它们；其他后端也没有它们；根据父指针重建缓存是显式修复操作，绝不是运行时 fallback。
+
+两条不变量支撑整个设计：
+
+- **每个条目至少位于一个 branch。** 每次追加都会把条目插入某个 branch（下方说明扩展或复制）。一个 branch 保存完整根路径；对其中任意条目而言，它与包含该条目的其他 branch 在祖先路径上一致，因为父链唯一。
+- **tip 唯一。** branch 只会以刚创建的条目结尾——扩展和复制都会把全新条目放在末尾——因此两个 branch 不会共享 tip。`branch_tips` 用一次点查询回答“是否有 branch 以 X 结尾”，结果是 0 或 1 行。
+
+**读计划** —— `findEntriesOnBranch({ start })` 可用于任意条目，无论它是否为 tip：
+
+1. 反向索引：查 `start` → 任意包含它的 branch。
+2. 对该 branch 做 range scan，条件为 `entry_seq <= start.seq`（父节点先于子节点意味着路径顺序等于 seq 顺序），join entries，应用过滤和停止条件。
+
+**追加计划** —— `appendEntry(entry, lane)` 在一个事务内执行。storage 实例在打开事务前排队写入；事务递增 session 的 sequence row 并使用返回值，因此并发 Lane 调用不会得到相同 `seq`，promise 也按该顺序 resolve。
+
+1. 取 `leaf = lanes[lane].leaf_id`；从 `session_sequences` 分配 `seq`；插入条目，令 `parent_id = leaf`。
+2. 查询 `branch_tips`：是否存在以 `leaf` 结尾的 branch？
+   - 是 → 在那里插入一行 `branch_entries`，并把该 tip 更新为新条目。
+   - 否 → 新建 branch：从任意包含 `leaf` 的 branch 复制满足 `entry_seq <= leaf.seq` 的行，插入新条目行，插入新 tip。（空 Lane：无需复制，直接新建 branch。）
+3. 设置 `lanes[lane].leaf_id = entry.id`。更新 fact/stats 投影。提交，然后发事件。
+
+下面四个例子中，`Bn: [...]` 表示一个 branch 按 seq 顺序保存的行：
+
+```text
+情况 1 —— 普通追加。绝大多数情况：一次查询，一行插入。
+
+  tree: a(1)─b(2)─c(3)      lanes: main→c       cache: B1:[a b c]
+  main appends d(4):        a branch ends at c → extend
+  tree: a─b─c─d             lanes: main→d       cache: B1:[a b c d]
+
+情况 2 —— 两个 Lane 共享一个叶子。第一个扩展，第二个复制。
+
+  lanes: main→c, t1→c                           cache: B1:[a b c]
+  t1 appends u(4):          B1 ends at c → extend        B1:[a b c u]
+    （B1 现在越过 main 的叶子——无害：main 读取只看 seq ≤ 3）
+  main appends d(5):        no branch ends at c → copy   B2:[a b c d]
+  tree: a─b─c─u                                 lanes: main→d, t1→u
+            └─d
+
+情况 3 —— Lane 停在历史中间。createLane("t2", at=b)，然后追加。
+
+  lanes: main→d, t2→b                           cache: B1:[a b c u], B2:[a b c d]
+  t2 reads:                 b found in B1 (or B2), scan seq ≤ 2 — nothing built
+  t2 appends x(6):          no branch ends at b → copy   B3:[a b x]
+
+情况 4 —— branch 仍以一个已有子节点的条目结尾。
+
+  接情况 2：B1:[a b c u], B2:[a b c d]；t1 导航离开，main 导航到 c。
+  main appends e(7):        c has children (u, d) — 但 tip 测试问的是正确问题：
+                            是否有 branch END at c？否 → 复制。
+                            如果确实有 branch 以 c 结尾（它的延续去了另一个
+                            branch 的副本），tip 测试就会扩展——只需一行，不用复制整条路径。
+                            has-children 测试会做不必要的复制；tip 测试不会。
+```
+
+不再有 Lane 经过它们的陈旧 branch 会保留。
+
+每个恢复查询都是一次索引 seek 加一次有界扫描：通过 `(lane, type, seq)` 查 Lane 的未完成操作；通过 `(lane, type, op_kind, seq)` 查最近一次 run 类型的 start；通过同一索引查操作之上的记录；通过自身叶子的读计划查 Lane 自己的条目。任何查询都不触碰其他 Lane 的数据。
+
+SQLite 实现后续事项：
+
+- 完成进行中的 search backend 工作。
+- 给搜索结果增加 limit 和 cursor 支持。
+- 尽可能让 `findEntries` 走索引或搜索支持的查询路径，而不是解码并过滤全部 session entries。
+- 在 search 和 `findEntries` 改动后重新审查 SQLite 查询计划，判断是否还需要进一步优化索引或查询形状。
+
+## 14. Agent-loop 构建块
+
+`agent-loop.ts` 暴露的构建块不拥有持久状态，也不了解 session、record 或 lane。harness 组合它们，并在它们的阶段之间插入持久化写入。
+
+### 流式处理一次助手响应
+
+```ts
+export interface StreamAssistantConfig {
+  model: Model;
+  systemPrompt?: string;
+  tools?: AgentTool[];
+  /** AgentMessage[] → AgentMessage[]。裁剪、注入。 */
+  transformContext?: (messages: AgentMessage[], signal?: AbortSignal) => Promise<AgentMessage[]>;
+  /** AgentMessage[] → provider messages。 */
+  toProviderMessages: (messages: AgentMessage[]) => Message[] | Promise<Message[]>;
+  /** 分发。models.streamSimple 按请求解析鉴权（credential store、
+      过期 token、header 合并、env、baseUrl）——这个配置上没有鉴权面。
+      streamFn 在测试中覆盖分发。 */
+  models: Models;
+  streamFn?: StreamFn;
+  /** SimpleStreamOptions 携带 apiKey/header/env 覆盖、transport、
+      timeouts、metadata、deferred——以及 before_payload 和 after_response
+      钩子的挂载点 onPayload/onResponse。 */
+  streamOptions?: SimpleStreamOptions;
+  /** 请求遥测的显式父级。第 18 节。 */
+  telemetryContext: TelemetryContext;
+  signal?: AbortSignal;
+}
+
+/** 一次 provider 请求。向 sink 发出 message_start / message_update /
+    message_end；返回最终助手消息。Provider 错误是 in-band 的：
+    stopReason 为 "error" | "aborted" | "deferred"。不改输入——
+    持久化是调用方的工作。 */
+export function streamAssistant(
+  messages: AgentMessage[],
+  config: StreamAssistantConfig,
+  emit: AgentEventSink,
+): Promise<SettledAssistantMessage>;
+```
+
+### Tool 执行
+
+Tool 声明恢复安全性。省略表示 `"never"`：
+
+```ts
+interface AgentTool {
+  replay?: "never" | "safe";
+  // 现有字段
+}
+```
+
+每次调用有三个阶段，分开暴露是因为 harness 需要在阶段之间写入，而恢复需要阶段 2 和 3 但不需要阶段 1：
+
+```ts
+type PreparedToolCall  = { kind: "prepared"; toolCall: AgentToolCall; tool: AgentTool; args: unknown };
+type ImmediateOutcome  = { kind: "immediate"; result: AgentToolResult; isError: true };
+                         // 未知 tool、无效参数、被阻止、中止
+type FinalizedToolCall = { toolCall: AgentToolCall; result: AgentToolResult; isError: boolean };
+
+/** 阶段 1 —— 准入。查找 tool、prepareArguments、schema 校验、
+    beforeToolCall（可以替换参数或阻止）、替换参数校验、abort 检查。
+    这里不会开始任何副作用。 */
+export function prepareToolCall(
+  toolCall: AgentToolCall, tools: AgentTool[], callbacks: ToolCallbacks,
+  telemetryContext: TelemetryContext, signal?: AbortSignal,
+): Promise<PreparedToolCall | ImmediateOutcome>;
+
+/** 阶段 2 —— 副作用本身。通过 sink 流式发出 tool_execution_update，
+    resolve 前清空待处理的 update 事件。从不抛出；失败变成错误结果。 */
+export function executeToolCall(
+  prepared: PreparedToolCall, emit: AgentEventSink,
+  telemetryContext: TelemetryContext, signal?: AbortSignal,
+): Promise<{ result: AgentToolResult; isError: boolean }>;
+
+/** 阶段 3 —— afterToolCall 按字段修补；抛出的回调变成错误结果。 */
+export function finalizeToolCall(
+  prepared: PreparedToolCall, executed: { result; isError }, callbacks: ToolCallbacks,
+  telemetryContext: TelemetryContext, signal?: AbortSignal,
+): Promise<FinalizedToolCall>;
+
+/** content ?? [] 规范化、addedToolNames 透传、时间戳。 */
+export function createToolResultMessage(finalized: FinalizedToolCall): ToolResultMessage;
+export function createErrorToolResult(text: string): AgentToolResult;
+
+export interface ToolCallbacks {
+  beforeToolCall?(call, args, signal): Promise<{
+    args?: Record<string, unknown>;
+    block?: { reason: string };
+  } | undefined>;
+  afterToolCall?(call, args, result, isError, signal): Promise<ToolResultPatch | undefined>;
+  /** 阶段 1 和 2 之间：持久化点。harness 在这里写 tool_started 记录。
+      两种模式下都按源顺序调用——准备总是顺序执行。 */
+  onToolStart?(call: AgentToolCall, effectiveArgs: Record<string, unknown>): Promise<void>;
+  /** 阶段 3 之后、结果消息发出之前；按源顺序。harness 在这里追加
+      结果条目，并把最终 terminate 决策持久化在它上面（第 12 节）。 */
+  onToolResult?(message: ToolResultMessage, terminate: boolean): Promise<void>;
+}
+
+/** 批次驱动规则：
+    - stopReason 为 "length" 时，所有 call 都不执行即失败：流式参数
+      可以做抢救式解析，也可能通过校验但实际被静默截断；没有安全的。
+    - 模式：当 options.toolExecution === "sequential"，或任一被调 tool
+      声明 executionMode 为 "sequential" 时为 sequential；否则 parallel。
+    - Parallel 模式：阶段 1 和 onToolStart 按源顺序顺序运行；阶段 2 并发；
+      所有执行 settle 后，阶段 3、onToolResult 和消息发出按源顺序进行。
+    - Abort：不再准备新的 call；已经开始执行的 call 自然 settle。
+    - terminate：当每个最终结果都设置 terminate 时为 true。 */
+export function executeToolBatch(
+  assistant: AssistantMessage, tools: AgentTool[], callbacks: ToolCallbacks,
+  options: { toolExecution?: "sequential" | "parallel" }, emit: AgentEventSink,
+  telemetryContext: TelemetryContext, signal?: AbortSignal,
+): Promise<{ messages: ToolResultMessage[]; terminate: boolean }>;
+```
+
+### 兼容包装器
+
+`agent-loop.ts` 现有公共接口不被破坏。每个导出保持签名和行为不变：`agentLoop`、`agentLoopContinue`、`runAgentLoop`、`runAgentLoopContinue`、`AgentEventSink`，以及它们消费的配置面（包括 `getSteeringMessages`、`getFollowUpMessages`、`prepareNextTurn`、`shouldStopAfterTurn`、`beforeToolCall`、`afterToolCall` 和事件顺序）。这些包装器使用 no-op `TelemetryContext` 组合 `streamAssistant` 和 `executeToolBatch`——没有持久化，也没有新语义。现有 `agent-loop` 和 `agent` 测试套件原样通过。
+
+## 15. Harness 内部实现
+
+下面的代码就是 harness 行为规范，由第 14 节的构建块组合而成。实时调用和 resume 走相同流程：`prompt()` 在接受后运行 `runProcedure()`；`resume()` 则带着已经记录的操作运行它。一切都以 Lane 为作用域；不同 Lane 的 procedure 并发运行，只在存储追加路径汇合。
+
+Part III 不在第 II 部分之外新增持久化语义。它新增两个机制：**effects boundary** 让每个崩溃点都可步进；**lane mutation line** 关闭正在运行的 procedure 与公共 Lane 表面之间的 check-then-act 竞态。
+
+### Effects boundary
+
+Procedure 执行的所有副作用都经过一个注入的 `Effects` 句柄 `fx`。在 `drive: "automatic"` 下，句柄直接透传给 session、models、tools 和 hook runner。在 `drive: "manual"` 下，同一个句柄被包进门（下文）。方法列表就是完整的崩溃点目录：在这些调用之前或之后停下，正好对应一个第 6 节 X 状态。
+
+```ts
+interface Effects {
+  // 持久写。每个都在 Lane 变更线头部校验并提交（见下文），然后更新 LaneState。
+  appendEntry(entry: ProvisionedEntry, telemetryContext: TelemetryContext): Promise<Entry>;
+  appendRecord<T extends LaneRecord>(record: NewRecord<T>, telemetryContext: TelemetryContext): Promise<T>;
+  moveLane(to: string | null, telemetryContext: TelemetryContext): Promise<void>;
+  setFact(fact: FactWrite, telemetryContext: TelemetryContext): Promise<void>;
+
+  // 条件提交。决策和写入在同一个 mutation-line job 中完成。
+  tryFinishRun(runId: string, outcome: "completed" | "failed",
+               telemetryContext: TelemetryContext,
+               error?: OperationError): Promise<"finished" | "continue">;
+  finishOperation(runId: string, outcome: "completed" | "declined" | "failed" | "aborted",
+                  telemetryContext: TelemetryContext,
+                  error?: OperationError): Promise<"finished" | "continue">;
+  commitRunEndFollowUp(runId: string, item: ProvisionedEntry,
+                       telemetryContext: TelemetryContext): Promise<"committed" | "dropped">;
+  consumeQueueItem(runId: string, queue: "steer" | "followUp", entryId: string,
+                   telemetryContext: TelemetryContext): Promise<"consumed" | "skipped">;
+  applyPendingWrite(runId: string, entryId: string,
+                    telemetryContext: TelemetryContext): Promise<"applied" | "skipped">;
+
+  // 外部副作用。
+  streamAssistant(request: AssistantRequest,
+                  telemetryContext: TelemetryContext): Promise<SettledAssistantMessage>;
+  executeTool(prepared: PreparedToolCall,
+              telemetryContext: TelemetryContext): Promise<{ result: AgentToolResult; isError: boolean }>;
+  fetchDeferred(model: Model, handle: DeferredHandle,
+                telemetryContext: TelemetryContext): Promise<SettledAssistantMessage>;
+  cancelDeferred(model: Model, handle: DeferredHandle,
+                 telemetryContext: TelemetryContext): Promise<void>;
+
+  // 拦截和时间。
+  runHook<K extends HookName>(name: K, event: HookEvent<K>,
+                              telemetryContext: TelemetryContext): Promise<HookResult<K>>;
+  sleep(delayMs: number, telemetryContext: TelemetryContext): Promise<"elapsed" | "aborted">;
+}
+```
+
+规则：
+
+- 读操作（`getEntry`、`findEntriesOnBranch`、上下文构建、id 分配）不是 effects，从不过门。
+- **构造规则：** procedure 只接收 `fx` 及当前 `TelemetryContext`——绝不直接接收 session、models、tools 或 hook runner。每次 `Effects` 调用都把该 context 作为最后一个非 payload 参数传入；第 15 节的 procedure 片段会在重复传递 context 掩盖控制流时省略它，而在父子关系重要的位置显示它。交给 `executeToolBatch` 的 tool 对象会被包装，使每个 `execute` 都路由到 `fx.executeTool`；第 14 节回调则路由到 `fx.runHook`、`fx.appendRecord` 和 `fx.appendEntry`，始终携带当前作用域 context。这条规则由构造方式和测试共同强制执行：manual 模式下停住的任何操作都不会产生存储写入或 provider/tool 调用。
+- `fx.streamAssistant` 包装第 14 节的 `streamAssistant`，并通过 `Models` 完成带鉴权的分发；`transform_context`、`before_payload`、`after_response` 在其中通过 `fx.runHook` 运行。摘要步骤强制 `deferred: false`；延迟的结构性结果是缺陷。
+- `fx` 实现会把 rejected `fetchDeferred` 转换为 `stopReason: "error"` 助手消息，因此预期的 provider 失败保持 in-band。持久写产生的意外 rejection 会让 harness fault（第 4 节）。
+
+### Lane mutation line
+
+这个设计中的每个竞态都有同一形状：先根据 lane state 做决策，然后经过一次 `await`，最后把过期决策作为持久写提交。修复方式是结构性的。每个 Lane 有一条进程内串行队列：
+
+```ts
+let tail: Promise<unknown> = Promise.resolve();
+
+function mutateLane<T>(job: () => Promise<T>): Promise<T> {
+  const result = tail.then(job);
+  tail = result.then(() => undefined, () => undefined);
+  return result;
+}
+```
+
+一个 job 是：根据实时 `LaneState` 校验 → 至多一次持久写 → 更新 `LaneState`。没有其他内容。Provider 请求、tool 执行、hook 和 backoff 绝不在 job 内部运行；它们在 job 之间运行，这正是为什么每次提交都要在自己的 job 内重新校验。由于 job 逐个运行，同一 Lane 上两个并发操作只有两种可能历史——`[A, B]` 或 `[B, A]`——而且两者都是已定义结果。不存在第三种交错历史。
+
+按调用方分类的 job：
+
+- **Lane 表面**（不过门，直接入队）：
+  - *操作接受* —— 校验空闲，把 pending `nextRun` 条目捕获进 `initialMessages`，写 `operation_started`，设置 `state.operation`。两个并发接受中的第二个会看到第一个的结果，并以 `busy` 拒绝且不写入。`before_run` 已在这个 job 之前、变更线外针对 prompt 运行过。
+  - *队列接受*（`steer`、`followUp`）—— 校验存在活跃且未中止的 run；写 `queue_enqueued`。`nextRun` 不校验任何东西，总是接受。
+  - *队列取消*（`cancelQueued`）—— 若没有对应 id 的 `queue_enqueued`：`Err(UnknownQueueItem)`；目标条目存在：`already_consumed`；不是 pending（已被 abort 清空或已取消）：`already_cleared`；否则写 `queue_cancelled` 并把它从 pending 集合移除。
+  - *延迟写接受*（lane 视图写入、配置 setter）—— run 打开时：写 `write_deferred`；结构性操作打开：等它结束再重新进入；空闲：直接追加 entry。
+  - *Abort* —— 写 `abort_requested`，设置 `aborting`，清空 `pendingSteer` / `pendingFollowUp`（payload 返回给 abort 调用方，也出现在 `run_abort` 事件中），并向活跃 effect 的 `AbortController` 发信号。
+  - *Resume 准入* —— 占用该 Lane 的唯一执行槽；不写。
+- **通过 `fx` 的 Procedure**（manual 模式下经过门控）：
+  - `tryFinishRun` —— 如果正在 abort 或仍有 pending 内容，不写并返回 `"continue"`；否则写 `operation_finished`，让 Lane 回到 idle。
+  - `consumeQueueItem` —— 如果条目仍然 pending 且 run 未 abort，追加它的 entry 并移除；否则 `"skipped"`。
+  - `applyPendingWrite` —— 延迟写的同形逻辑；即使正在 abort 也会应用。
+  - `commitRunEndFollowUp` —— 只有 run 活跃且未 abort 时写 `queue_enqueued`；否则 `"dropped"`。
+  - `finishOperation` —— 写终端 record，除非被抢先：非 abort 结果遇到已有 abort 标记时返回 `"continue"`；`"aborted"` 结果在延迟写仍 pending 时也返回 `"continue"`，让 reconciliation 先应用它们。
+  - 普通 `appendEntry` / `appendRecord` / `moveLane` / `setFact` —— 无条件的单次写入，仍由变更线串行化。
+
+两个例子。两者顺序都合法，也不可能有其他顺序：
+
+```text
+steer vs finish                          abort vs before_run_end follow-up
+[steer, finish]:                         [abort, commit]:
+  queue_enqueued; pendingSteer=[x]         abort_requested; queues drained
+  tryFinishRun → "continue"                commitRunEndFollowUp → "dropped"
+  run consumes the steer                   reconciliation; no record after abort
+[finish, steer]:                         [commit, abort]:
+  operation_finished; lane idle            queue_enqueued committed
+  steer → NoActiveRun, no write            abort drains it; payload returned
+```
+
+### 竞态目录
+
+下面是完整清单。每行列出两种合法历史，以及强制产生它们 job。Tier C（第 19 节）会测试每一行的两种顺序。
+
+| # | 竞态 | 历史 | 机制 |
+|---|---|---|---|
+| 1 | `prompt()` vs `prompt()` | 一个接受；另一个 `busy` 且不写 | acceptance job |
+| 2 | `steer` / `followUp` vs run 结束 | checkpoint 处消费 · `NoActiveRun` | queue acceptance + `tryFinishRun` |
+| 3 | 延迟写 vs run 结束 | close 前应用 · idle 直接追加 | write acceptance + `tryFinishRun` |
+| 4 | abort vs run 结束 | reconciliation，结果 `aborted` · `NoActiveOperation` | abort job + `tryFinishRun` |
+| 5 | abort vs 队列消费 | entry 已追加且不在 abort payload 中 · 由 abort 返回并跳过 | `consumeQueueItem` + abort drain |
+| 6 | abort vs `before_run_end` follow-up | 先提交再被 abort 清空 · 直接丢弃，marker 后没有内容 | `commitRunEndFollowUp` |
+| 7 | `nextRun` vs 操作接受 | 被本次 run 捕获 · 属于下一次 | acceptance 内捕获 |
+| 8 | 延迟写 vs abort close | 在 reconciliation 期间应用 · 在 close 前应用 | `finishOperation("aborted")` 循环 |
+| 9 | 配置/树写入 vs 接受快照 | 在 run 第一次请求前提交 · 延迟写 | 两者都是变更线 job；快照在接受后读取 |
+| 10 | abort vs 进行中的 provider/tool effect | effect 自然 settle · effect 已发生但结果未返回 | 存储中 `seq` 线性化（第 13 节）；各 Lane 不共享状态 |
+| 11 | 不同 Lane 的写入 | 各自按提交顺序线性化 | 存储 `seq` 线性化（第 13 节） |
+| 12 | `cancelQueued` vs 消费 | 先消费：`already_consumed` · 先取消：消费跳过，模型永远看不到它 | cancel job + `consumeQueueItem` |
+
+第 10 行是任何顺序都无法消除的竞态：即使结果从未返回，外部 effect 也可能已经发生。设计的答案就是第 5 节的意图 record 加重放策略——与崩溃的处理方式相同。
+
+### Drive modes
+
+`drive: "automatic"` 直接透传 `fx`；零额外开销。`drive: "manual"` 把操作的 `fx` 包进门：每个方法调用在执行前停住，并暴露一个 JSON-safe 描述。
+
+```ts
+type ActionInfo =
+  | { kind: "append_entry";  entryType: Entry["type"]; entryId: string }
+  | { kind: "append_record"; recordType: LaneRecord["type"] }
+  | { kind: "move_lane"; to: string | null }
+  | { kind: "set_fact"; fact: "name" | "label" }
+  | { kind: "try_finish_run"; outcome: "completed" | "failed" }
+  | { kind: "finish_operation"; outcome: "completed" | "declined" | "failed" | "aborted" }
+  | { kind: "commit_follow_up" }
+  | { kind: "consume_queue_item"; queue: "steer" | "followUp"; entryId: string }
+  | { kind: "apply_pending_write"; entryId: string }
+  | { kind: "stream_assistant"; step: "assistant" | "compaction" | "branch_summary"; attempt: number }
+  | { kind: "execute_tool"; toolCallId: string; toolName: string }
+  | { kind: "fetch_deferred" | "cancel_deferred"; provider: string; id: string }
+  | { kind: "hook"; name: HookName }
+  | { kind: "sleep"; delayMs: number };
+```
+
+```ts
+class GatedEffects implements Effects {
+  private readonly queue: { info: ActionInfo; release: () => Promise<void> }[] = [];
+
+  private gate<T>(info: ActionInfo, run: () => Promise<T>): Promise<T> {
+    return new Promise((resolve, reject) => {
+      this.queue.push({
+        info,
+        release: async () => { await run().then(resolve, reject); },
+      });
+      this.arrived();          // 唤醒等待中的 driver
+    });
+  }
+
+  appendRecord(record: NewRecord, telemetryContext: TelemetryContext) {
+    return this.gate({ kind: "append_record", recordType: record.type },
+                     () => this.inner.appendRecord(record, telemetryContext));
+  }
+  // ... 每个方法都有一个包装器
+}
+```
+
+Lane 上（第 8 节）的公共控制：
+
+- `peekAction()` resolve 为下一个停住调用的描述；当不存在操作或操作已经 settle 时为 `undefined`。无副作用；连续调用两次返回相同 action。
+- `executeAction()` 只释放 `peekAction()` 描述的那个停住调用。随后它会等到该调用 settle、操作 settle、或被释放的调用停住一个嵌套 action；然后返回下一个停住 action 或 `undefined`。它从不一次释放两个 action。
+- `runToCompletion()` 持续释放直到操作 settle。
+- 两个并发 driver 是程序员缺陷；automatic 模式下调用这些控制也是缺陷。
+
+使测试确定性的语义：
+
+- 门是可重入的。一个被释放的 action 可以继续调用其他 `fx` 方法——特别是 `stream_assistant` 内部触达的 `transform_context`、`before_payload` 和 `after_response` hook。嵌套调用作为独立 action 停住。driver 会观察并先释放它，绝不会隐藏嵌套停住而等待外层 action。因此每个 hook 都保持独立崩溃边界，manual drive 也不会死锁。
+- 门会串行化。并行 tool 批次按源顺序发出阶段 2 调用（阶段 1 本来就顺序执行，第 14 节）；门把每个都作为独立 `execute_tool` action 停住，manual 模式逐个运行。并行是生产优化；源序 finalization 已经固定语义，所以 automatic 和 manual 模式产生相同的持久日志。
+- Lane 表面不过门。procedure 停住时，测试可以直接调用 `steer()`、`abort()`、`session.appendMessage()`——它们的 job 会立即在 mutation line 上运行。通过选择在 `executeAction()` 之前还是之后调用表面方法，可以构造竞态目录每一行的两种顺序。
+- 停住时调用 `close()`：所有停住调用以 `HarnessClosed` reject，本地操作 promise reject，其他内容不再提交。持久状态正好是已释放 effects 的前缀——这就是崩溃点的定义。重新打开后端，`resume()` 执行普通的第 7 节恢复。automatic 模式下 `close()` 向进行中的 effect 发信号，等待正在进行的追加，然后释放写者租约；无论哪种情况，未完成操作都可恢复。
+
+### 实时 lane state
+
+```ts
+interface EffectiveLaneConfiguration {
+  model: { provider: string; modelId: string };
+  thinkingLevel: ThinkingLevel;
+  activeToolNames: string[];
+}
+
+interface TerminalFailureState {
+  entryId: string;
+  source: "step" | "deferred_fetch";
+  message: AssistantMessage;
+}
+
+/** 每 Lane 的内存编排状态。它始终等于根据该 Lane 的记录和自有条目
+    归约出的 laneState（第 7 节）：实时提交更新它；restore 重新计算它。 */
+interface LaneState {
+  lane: string;
+  leafId: string | null;
+  operation: null | {
+    id: string;
+    kind: "run" | "compaction" | "navigation";
+    intent: OperationStartedRecord["intent"];
+    aborting: boolean;
+    step: null | {                          // 未完成 step：最新尝试的结果条目缺失
+      kind: "assistant" | "compaction" | "branch_summary";
+      attempts: number;
+      resultEntryId: string;                // 最新尝试预分配的结果 id
+      compactionReason?: "manual" | "threshold" | "overflow";
+    };
+    toolBatch: null | ToolBatchState;
+    missingInitialMessages: ProvisionedEntry[];
+    pendingSteer: ProvisionedEntry[];
+    pendingFollowUp: ProvisionedEntry[];
+    pendingWrites: ProvisionedEntry[];
+    deferred: DeferredHandle | null;        // 未兑换句柄
+    overflowRecoveryUsed: boolean;          // 第 6 节溢出保护，来自归约
+    /** 本操作追加的最新条目；纯谓词读取它。 */
+    newestOwn: null | { entryId: string; type: Entry["type"];
+                        role?: AgentMessage["role"]; stopReason?: TerminalStopReason };
+    targets: { result?: boolean; summary?: boolean };   // 结构性操作
+  };
+  pendingNextRun: ProvisionedEntry[];
+}
+
+interface ToolBatchState {
+  assistantEntryId: string;
+  calls: {                                  // 原始源顺序和序号
+    toolIndex: number;
+    toolCall: AgentToolCall;
+    started?: ToolStartedRecord;
+    resultExists: boolean;
+    terminate?: boolean;                    // 持久化在结果条目上
+  }[];
+  truncated: boolean;                       // 助手 stopReason 是 "length"
+  unresolved: boolean;
+}
+
+interface LaneReductionInput extends RecordLogSlice {
+  leafId: string | null;
+  /** 打开操作追加的条目，旧到新。空闲时为空。 */
+  ownEntries: readonly Entry[];
+  /** 在操作锚点或空闲叶子处做有界有效状态查询，旧到新。 */
+  configurationEntries: readonly Entry[];
+  /** 没有持久值时使用的 harness option fallback。 */
+  defaults: EffectiveLaneConfiguration;
+}
+
+interface LaneReductionResult {
+  laneState: LaneState;
+  effectiveConfiguration: EffectiveLaneConfiguration;
+  /** 只有当 newestOwn 是 step 或 deferred fetch 产生的错误时非空；
+      任意外形的延迟写错误不会触发。 */
+  terminalFailure: TerminalFailureState | null;
+}
+
+function reduceLaneState(input: LaneReductionInput): LaneReductionResult;
+```
+
+四个控制流信号以异常形式在 procedure 内部传递；没有一个会逃逸给调用方。`RunFailed` 携带终端失败进入 drain-and-finish 路径。`Park` 在延迟句柄已持久化后展开调用栈，Lane 挂起。`Aborted` 展开到 abort 路径。`Overflow` 把被丢弃的可恢复响应（第 6 节）路由进压缩重试路径。任何其他 rejection 都会让 harness fault。
+
+```ts
+class RunFailed { constructor(readonly error: OperationError) {} }
+class Park      { constructor(readonly handle: DeferredHandle) {} }
+class Aborted   {}
+class Overflow  {}   // 可恢复响应被丢弃；其成本已进入台账
+
+const newId = (): string => session.idGenerator.next();
+
+/** 所有位置都支持安全恢复重入：跳过已存在的 provisioned id
+    （校验内容相等；不同内容是损坏）。 */
+async function appendIfMissing(target: ProvisionedEntry): Promise<void> {
+  if (!(await session.getEntry(target.id))) await fx.appendEntry(target);
+}
+```
+
+### Dispatch
+
+```ts
+async function resume(): Promise<ResumeResult> {
+  if (missing.tools.length || missing.models.length) {
+    return Result.err(new MissingIdentities({ lane: state.lane, ...missing,
+                                              message: "Missing tools or models" }));
+  }
+  await fx.runHook("before_resume", beforeResumeEvent(state));  // 按注册 id（第 11 节）
+  emit({ type: "run_resume", runId: op.id, recovery: true });
+  // tagResume 把操作 Result 重标为 ResumeResult：Ok 增加 { operation }，
+  // Err 原样透传。
+  switch (op.kind) {
+    case "run":        return tagResume("run",        await runProcedure());
+    case "compaction": return tagResume("compaction", await compactionProcedure());
+    case "navigation": return tagResume("navigation", await navigationProcedure());
+  }
+}
+
+async function runProcedure(): Promise<RunResult> {
+  try {
+    for (const m of [...op.missingInitialMessages]) await appendIfMissing(m);  // 从不丢弃
+    if (op.aborting) return await abortPath();
+
+    if (op.deferred) {
+      const redeemed = await redeemDeferred();               // 可能抛出 Park、RunFailed、Aborted
+      if (hasToolCalls(redeemed)) await runToolBatch(redeemed);
+    }
+    if (op.toolBatch?.unresolved) await reconcileToolBatch(op.toolBatch);
+
+    // step 中途崩溃会在消费新的 checkpoint 输入之前恢复该 step（第 7 节）。
+    // 实时重试和恢复的消费方式完全相同。
+    if (op.step?.kind === "assistant") {
+      const outcome = await runTurn();
+      if (outcome) return outcome;
+    } else if (op.step?.kind === "compaction") {
+      await autoCompact(requireAutoReason(op.step));         // 已记录的原因
+    } else if (op.step) {
+      throw new Error("Run has a branch-summary step");      // 损坏
+    }
+
+    if (newestOwnMessageIsStepError(state)) {                // 终端失败 marker（第 7 节）
+      return await handleRunFailed(existingFailure(state));
+    }
+    return await driverLoop();
+  } catch (e) {
+    return await handleRunSignal(e);
+  }
+}
+
+async function handleRunSignal(e: unknown): Promise<RunResult> {
+  if (e instanceof Park)      return suspended(e.handle);    // 丢弃 procedure；lane 停住
+  if (e instanceof Aborted)   return await abortPath();
+  if (e instanceof RunFailed) return await handleRunFailed(e.error);
+  throw e;                                                   // 存储/缺陷 → faulted harness
+}
+```
+
+**不动点自检。** 当 `resume()` 完成、停住或关闭其操作时，harness 会根据存储重新计算第 7 节归约，并把结果 `laneState` 与实时 `LaneState` 比较。不一致就是损坏并使 harness fault——writer/reducer 漂移会在发生的那一刻被抓住，而不是等下一次崩溃。这个检查很便宜（使用 restore 执行的同两次有界读），并且在生产环境运行，不只在测试中运行。
+
+### 循环
+
+```ts
+async function driverLoop(): Promise<RunResult> {
+  while (true) {
+    // checkpoint —— 每次消费都是一个条件性 mutation-line job
+    for (const w of [...op.pendingWrites])            await fx.applyPendingWrite(op.id, w.id);
+    for (const m of steeringForThisCheckpoint(op))    await fx.consumeQueueItem(op.id, "steer", m.id);
+    if (op.aborting) return await abortPath();
+    if (await contextOverLimit()) {
+      await autoCompact(pressureReason());                  // 可能抛出 RunFailed
+      continue;                                             // 新 checkpoint：压缩期间可能有输入到达
+    }
+
+    if (needsAssistant()) {
+      const outcome = await runTurn();
+      if (outcome) return outcome;
+      continue;                                              // 新 checkpoint
+    }
+
+    for (const m of followUpsForThisCheckpoint(op))   await fx.consumeQueueItem(op.id, "followUp", m.id);
+    if (needsAssistant() || hasPendingWork()) continue;
+
+    // finish boundary
+    const r = await fx.runHook("before_run_end", { runId: op.id, messages: runMessages() });
+    if (r?.followUp) {
+      await fx.commitRunEndFollowUp(op.id, provisionUserMessage(newId(), r.followUp));
+    }
+    if (hasPendingWork()) continue;
+
+    const done = await fx.tryFinishRun(op.id, "completed");
+    if (done === "finished") return finished("completed");
+    // "continue"：输入或 abort 抢到了顺序 —— 回到循环
+  }
+}
+
+async function runTurn(): Promise<RunResult | undefined> {
+  let assistant: AssistantMessage;
+  try {
+    assistant = await assistantStep();          // 可能抛出 Park、RunFailed、Aborted、Overflow
+  } catch (e) {
+    if (e instanceof Overflow) return await recoverOverflow();
+    throw e;
+  }
+  if (assistant.stopReason === "aborted" || op.aborting) return await abortPath();
+  if (hasToolCalls(assistant)) await runToolBatch(assistant);
+  return undefined;
+}
+
+async function recoverOverflow(): Promise<RunResult | undefined> {
+  if (op.aborting) return await abortPath();
+  if (op.overflowRecoveryUsed) {                // 每个会话式输入一次（第 6 节）
+    await fx.appendEntry(giveUpAssistantEntry(lastAttemptResultId(op), state, truncationError()));
+    return await handleRunFailed(truncationError());
+  }
+  await autoCompact("overflow");              // declined 或没有可压缩内容 → RunFailed
+  return undefined;                             // driverLoop 继续；needsAssistant 仍为 true
+}
+
+async function handleRunFailed(error: OperationError): Promise<RunResult> {
+  try {
+    // 清空已接受输入。没有 before_run_end，也没有进一步模型工作，
+    // 除非被消费的会话式输入重新启动循环。
+    while (true) {
+      for (const w of [...op.pendingWrites]) await fx.applyPendingWrite(op.id, w.id);
+      let consumed = 0;
+      for (const m of steeringForThisCheckpoint(op)) {
+        if (await fx.consumeQueueItem(op.id, "steer", m.id) === "consumed") consumed++;
+      }
+      if (consumed === 0) {
+        for (const m of followUpsForThisCheckpoint(op)) {
+          if (await fx.consumeQueueItem(op.id, "followUp", m.id) === "consumed") consumed++;
+        }
+      }
+      if (op.aborting) return await abortPath();
+      if (consumed > 0) return await driverLoop();           // 输入清除了失败
+      const done = await fx.tryFinishRun(op.id, "failed", error);
+      if (done === "finished") return finished("failed", error);
+    }
+  } catch (e) {
+    return await handleRunSignal(e);
+  }
+}
+```
+
+`needsAssistant()`：最新的自有消息是 user、steering、follow-up 或 tool-result 消息——但已完成的 tool batch 中每个结果都持久化了 `terminate: true` 时除外，这种情况本身不强制新 turn（第 4 节）。`hasPendingWork()`：存在 pending 写、pending 队列条目，或 `needsAssistant()` 为真。
+
+### Steps
+
+失败尝试不追加任何东西。除了成功响应，只有延迟句柄、终端消息或最终放弃错误进入树（第 6 节 retry trace）。
+
+```ts
+async function assistantStep(): Promise<SettledAssistantMessage> {
+  while (true) {
+    if (op.aborting) throw new Aborted();
+    const attempt = (op.step?.kind === "assistant" ? op.step.attempts : 0) + 1;
+    if (attempt > retry.maxAttempts) {
+      const error = retriesExhausted();
+      // 放弃 entry 完成最后一次尝试预分配的 id。
+      await fx.appendEntry(giveUpAssistantEntry(lastAttemptResultId(op), state, error));
+      throw new RunFailed(error);
+    }
+
+    const options = await fx.runHook("before_request",
+      { model: laneModel(state), step: "assistant", attempt, streamOptions });
+    const resultEntryId = newId();
+    await fx.appendRecord(stepAttempt(op.id, "assistant", attempt, resultEntryId));
+
+    const final = await fx.streamAssistant(assistantRequest(state, options));
+    await fx.appendRecord(usageRecord("assistant", op.id, resultEntryId, attempt, final));  // 台账，在任何分支之前
+
+    if (isRecoverableOverflow(final, state)) {
+      throw new Overflow();                     // 被丢弃；resultEntryId 保持未完成
+    }
+    if (final.stopReason === "deferred") {
+      await fx.appendEntry(assistantEntry(resultEntryId, final));
+      emit({ type: "run_suspend", runId: op.id, deferred: final.deferred });
+      throw new Park(final.deferred);
+    }
+    if (final.stopReason === "error" && isRetryable(final)) {
+      await fx.sleep(retryDelay(attempt));                   // 重试事件围绕这里
+      continue;                                              // 持久计数已经前进
+    }
+
+    await fx.appendEntry(assistantEntry(resultEntryId, final));
+    if (final.stopReason === "error") throw new RunFailed(messageError(final));
+    return final;                                            // stop、toolUse、真实 length、aborted
+  }
+}
+```
+
+`isRecoverableOverflow(final, state)` 是 `isContextOverflow(final)`——溢出模式错误和静默溢出——或来自第 6 节的 `isRecoverableLength(final, desiredMaxOutput(state))`；当调用方设置了 `maxTokens` 时，`desiredMaxOutput(state)` 就是它，否则是 Lane 模型的 `maxTokens`。该检查在可重试错误分支之前运行：溢出形式的错误会触发压缩，而不是原样重试同一个过大请求。
+
+`summaryStep(step, reason, resultEntryId)` 形状相同：每次尝试前写 `step_attempt`（compaction step 携带 `compactionReason`），携带该步骤唯一的 result id；运行 `before_request` 和一至两个非 deferred 请求，每个请求后写入绑定到该 id 的 `usage` record；受持久上限约束。它返回 summary 值；调用方在该 id 下追加结果条目。钩子提供的 summary 不发请求也不写请求 record；它的 entry 持久化 `fromHook: true`，如果钩子自己测量了 usage，追加 procedure 还会在 entry 旁边写一条 `hook` usage record。reason 为 `overflow` 时，追加 procedure 也写 compaction `step_attempt`，因此“每输入一次”的保护会计入这次恢复（第 6 节）。
+
+### Deferred redemption
+
+```ts
+async function redeemDeferred(): Promise<SettledAssistantMessage> {
+  const final = await fx.fetchDeferred(deferredModel(state), op.deferred!);
+  const resultEntryId = newId();
+  if (final.stopReason !== "deferred" || hasReportedUsage(final)) {
+    await fx.appendRecord(usageRecord("deferred_fetch", op.id, resultEntryId, 1, final));
+  }
+  if (op.aborting) throw new Aborted();
+  if (final.stopReason === "deferred") {
+    requireSameHandle(final.deferred, op.deferred!);           // 不匹配是缺陷（第 16 节）
+    throw new Park(op.deferred!);                              // 仍然 pending；没有其他写
+  }
+  if (final.stopReason === "aborted")  throw new Aborted();
+
+  await fx.appendEntry(assistantEntry(resultEntryId, final));  // ready 或 terminal
+  if (final.stopReason === "error") throw new RunFailed(messageError(final));
+  return final;
+}
+```
+
+每次 `resume()` 只 fetch 一次。仍然 pending 时重新停住且不写入。terminal 结果——无论是返回的还是由 rejected fetch 转换来的——都会成为错误条目，并通过普通 drain 路径让 run 失败；这条路径仍然尊重失败前接受的输入（第 6 节）。
+
+### Tools
+
+实时路径就是第 14 节的 `executeToolBatch`；持久化回调路由到 `fx`，因此门和 trace 都能按序看到每次写：
+
+```ts
+async function runToolBatch(assistant: AssistantMessage, telemetryContext: TelemetryContext): Promise<void> {
+  const resultIds = new Map<string, string>();               // toolCallId → provisioned id
+
+  await executeToolBatch(assistant, gatedActiveTools(), {
+    beforeToolCall: async (call, args) => {
+      return await fx.runHook("before_tool",
+        { toolCallId: call.id, toolName: call.name, args });  // 可以修补参数或阻止
+    },
+    onToolStart: async (call, effectiveArgs) => {
+      const resultEntryId = newId();
+      resultIds.set(call.id, resultEntryId);
+      await fx.appendRecord(toolStarted(op.id, {
+        assistantEntryId: newestAssistantEntryId(state),
+        toolIndex: indexOf(assistant, call),
+        toolCallId: call.id, toolName: call.name,
+        effectiveArgs, resultEntryId,
+        replay: declaredReplay(call),
+      }));
+    },
+    afterToolCall: (call, args, result, isError) =>
+      fx.runHook("after_tool", { toolCallId: call.id, toolName: call.name, args, ...result, isError }),
+    onToolResult: async (message, terminate) => {
+      // 被阻止/无效的调用没有 tool_started，也没有 provisioned id；
+      // 它们的错误结果条目获得全新 id（第 5 节）。
+      const entryId = resultIds.get(message.toolCallId) ?? newId();
+      if (message.usage) {
+        await fx.appendRecord(toolUsageRecord(op.id, entryId, message.toolCallId, message.usage));
+      }
+      await appendIfMissing(resultEntry(entryId, message, terminate));
+    },
+  }, { toolExecution: config.toolExecution }, emitLaneEvents, telemetryContext, abortSignal);
+}
+```
+
+恢复路径按源顺序在每个调用自己的崩溃点处理它，并保留原始序号：
+
+```ts
+async function reconcileToolBatch(batch: ToolBatchState, telemetryContext: TelemetryContext): Promise<void> {
+  if (batch.truncated) {                                     // stopReason 为 "length"：从不执行
+    for (const call of batch.calls) {
+      if (!call.resultExists) await appendIfMissing(truncatedToolResult(newId(), call.toolCall));
+    }
+    return;
+  }
+
+  for (const call of batch.calls) {
+    if (call.resultExists) continue;
+
+    if (call.started) {                                      // X3：副作用结果未知
+      if (call.started.replay === "safe" && currentDeclaration(call) === "safe") {
+        const prepared = { kind: "prepared", toolCall: call.toolCall,
+                           tool: toolByName(call.started.toolName),
+                           args: call.started.effectiveArgs };   // 持久值，不重新推导
+        const executed  = await fx.executeTool(prepared);
+        const finalized = await finalizeToolCall(prepared, executed,
+          { afterToolCall }, telemetryContext, abortSignal); // 接 fx 的 hook 回调
+        if (finalized.result.usage) {
+          await fx.appendRecord(toolUsageRecord(op.id, call.started.resultEntryId,
+            call.toolCall.id, finalized.result.usage));   // 重放自己的记录
+        }
+        await appendIfMissing(resultEntry(call.started.resultEntryId,
+          createToolResultMessage(finalized), finalized.result.terminate === true));
+      } else {
+        await appendIfMissing(syntheticResult(call.started.resultEntryId, "interrupted"));
+      }
+    } else {                                                 // X1/X2：完整路径，原始序号
+      await runToolBatchForSingleCall(call);
+    }
+  }
+}
+```
+
+### Abort
+
+`abort()` 本身是 Lane 表面 job（上文 mutation line）：marker、队列清空、信号、resolve。Reconciliation 是 procedure 工作。如果操作在没有 procedure 运行时挂起，`abort()` 会从 abort 路径启动一个；manual 模式让它停在第一个 action。
+
+```ts
+async function abortPath(): Promise<RunResult> {
+  if (op.deferred) await fx.cancelDeferred(deferredModel(state), op.deferred);  // 尽力而为：
+                                                             // rejection → 遥测后继续
+  while (true) {
+    for (const call of op.toolBatch?.calls ?? []) {
+      if (call.resultExists) continue;
+      await appendIfMissing(syntheticResult(idFor(call), call.started ? "interrupted" : "aborted"));
+    }
+    for (const w of [...op.pendingWrites]) await fx.applyPendingWrite(op.id, w.id);  // fact 能在 abort 后保留
+    if (!newestOwnMessageIsAborted(state)) await appendIfMissing(abortClosureEntry(newId(), state));
+
+    const done = await fx.finishOperation(op.id, "aborted");
+    if (done === "finished") return finished("aborted");
+    // "continue"：期间有延迟写到达——先应用再关闭
+  }
+}
+```
+
+### 结构性操作
+
+```ts
+async function compactionProcedure(): Promise<CompactionResult> {
+  try {
+    if (op.aborting) return await abortStructural();
+    if (!op.targets.result) {
+      let result: CompactResult | undefined;
+      let fromHook = false;
+      if (!op.step) {          // 尚未尝试：决策钩子仍可运行
+        const hook = await fx.runHook("before_compaction",
+          { reason: "manual", preparation: preparation(state),
+            customInstructions: op.intent.customInstructions });
+        if (hook?.decline) return await finishStructural("declined");
+        result = hook?.compaction;
+        fromHook = result !== undefined;
+        if (result?.usage) {
+          await fx.appendRecord(hookUsageRecord(op.id, op.intent.resultEntryId, result.usage));
+        }
+      }
+      result ??= await summaryStep("compaction", "manual", op.intent.resultEntryId);
+      await appendIfMissing(compactionEntry(op.intent.resultEntryId, result, fromHook));
+    }
+    return await finishStructural("completed");
+  } catch (e) { return await handleStructuralSignal(e); }
+}
+
+/** 在 run 内部的 checkpoint 或溢出响应之后执行。同一个钩子，
+    同样持久化尝试和上限，与手动压缩一致；没有嵌套操作 record。
+    重试耗尽抛出 RunFailed —— 外层 run 清空并以 failed 结束，
+    不运行 before_run_end（第 11 节）。reason 为 "overflow" 时，
+    hook decline 或空 preparation 也抛出 RunFailed：没有压缩请求就装不下（第 6 节）。 */
+async function autoCompact(reason: "threshold" | "overflow"): Promise<void> {
+  const resultEntryId = op.step?.kind === "compaction" ? op.step.resultEntryId : newId();
+  if (op.step?.kind !== "compaction") {   // 还没有持久压缩决策；在 overflow 路径上，
+                                          // op.step 是被放弃的助手 step
+    const prep = preparation(state);
+    if (nothingToCompact(prep)) {
+      if (reason === "overflow") throw new RunFailed(truncationError());
+      return;
+    }
+    const hook = await fx.runHook("before_compaction", { reason, preparation: prep });
+    if (hook?.decline) {
+      if (reason === "overflow") throw new RunFailed(truncationError());
+      return;
+    }
+    if (hook?.compaction) {
+      if (reason === "overflow") {        // “每输入一次”的保护计入这次尝试
+        await fx.appendRecord(stepAttempt(op.id, "compaction", 1, resultEntryId, reason));
+      }
+      if (hook.compaction.usage) {
+        await fx.appendRecord(hookUsageRecord(op.id, resultEntryId, hook.compaction.usage));
+      }
+      await appendIfMissing(compactionEntry(resultEntryId, hook.compaction, true));
+      return;
+    }
+  }
+  const result = await summaryStep("compaction", reason, resultEntryId);
+  await appendIfMissing(compactionEntry(resultEntryId, result, false));
+}
+
+async function navigationProcedure(): Promise<NavigationResult> {
+  try {
+    if (op.aborting) return await abortStructural();
+    const moved = state.leafId === op.intent.targetId;       // acceptance 已拒绝 target == source
+    let summary: SummaryValue | undefined;
+    let fromHook = false;
+
+    if (op.intent.summarize && !op.targets.summary) {
+      if (!moved && !op.step) {                              // 决策钩子：移动前一次
+        const hook = await fx.runHook("before_navigation",
+          { targetId: op.intent.targetId,
+            preparation: preparation(state) });                // preparation 从 intent.sourceLeafId
+                                                               // 派生——移动前后都有效
+        if (hook?.decline) return await finishStructural("declined");
+        summary = hook?.summary;
+        fromHook = summary !== undefined;
+        if (summary?.usage) {
+          await fx.appendRecord(hookUsageRecord(op.id, op.intent.summaryEntryId!, summary.usage));
+        }
+      }
+      summary ??= await summaryStep("branch_summary", undefined,
+                                    op.intent.summaryEntryId!);   // 移动后崩溃会重新生成
+    }
+
+    if (!moved) await fx.moveLane(op.intent.targetId);       // 提交点（第 6 节）
+    if (op.intent.summarize && !op.targets.summary) {
+      await appendIfMissing(summaryEntry(op.intent.summaryEntryId!, summary!, fromHook));  // 链接到目标
+    }
+    if (op.intent.label !== undefined) {
+      await fx.setFact(labelFact(op.intent.targetId, op.intent.label));          // 幂等
+    }
+    return await finishStructural("completed");
+  } catch (e) { return await handleStructuralSignal(e); }
+}
+
+async function finishStructural(outcome: "completed" | "declined") {
+  const done = await fx.finishOperation(op.id, outcome);
+  if (done === "continue") return await abortStructural();   // abort 抢到了顺序
+  return structuralOutcome(outcome);
+}
+
+async function abortStructural() {
+  // 没有需要 reconcile 的内容：结构性操作没有 tool batch，
+  // 而 lane 视图写入会等待它们（第 12 节）。
+  await fx.finishOperation(op.id, "aborted");
+  return structuralOutcome("aborted");
+}
+
+async function handleStructuralSignal(e: unknown) {
+  if (e instanceof Aborted)   return await abortStructural();
+  if (e instanceof RunFailed) {
+    const done = await fx.finishOperation(op.id, "failed", e.error);
+    return done === "continue" ? await abortStructural() : structuralOutcome("failed", e.error);
+  }
+  throw e;
+}
+```
+
+Hook 与拦截点的对应表：
+
+| harness hook | 插入点 |
+|---|---|
+| `transform_context` | `fx.streamAssistant` 内部（`StreamAssistantConfig.transformContext`） |
+| `before_request` | `fx.streamAssistant` 前，修补 stream options |
+| `before_payload` | stream 函数内部，provider 层 |
+| `after_response` | 流结果上，entry 追加前 |
+| `before_tool` | `ToolCallbacks.beforeToolCall`（阶段 1） |
+| `after_tool` | `ToolCallbacks.afterToolCall`（阶段 3） |
+| `before_run_end` | `driverLoop` 完成边界；结果通过 `fx.commitRunEndFollowUp` 提交 |
+| `before_resume` | `resume()` dispatch，任何 effect 前 |
+| —（record/entry 写入） | 通过 `fx` 的 `ToolCallbacks.onToolStart` / `onToolResult` |
+
+说明：
+
+- run 内部的自动压缩在该 run 自己的 records 下运行；没有嵌套操作。
+- 代码里不存在“step 中途崩溃”这种特殊分支：被打断的尝试就是缺少结果条目的 attempt，上限检查决定重试还是 `RunFailed`。
+- 并行批次与崩溃点可以组合：`tool_started` 记录在顺序执行的阶段 1 中按源顺序写入，所以批次中途崩溃留下源序前缀——有些有结果，有些没有（第 6 节表格按每个 call 适用）。
+- 已中止的助手消息（`stopReason: "aborted"`）跳过 tool 执行；合成结果由 `abortPath()` 负责。
+- 导航移动与其 summary entry 之间崩溃会丢失内存中的 summary 文本；恢复会在同一尝试上限下重新生成。这个窗口中丢失的钩子 summary 会被重新生成而不是再次询问：钩子的 decline 权限已经在移动时结束。
+
+## 16. pi-ai 延迟请求
+
+所有内容按请求处理；batch API 可以通过自定义 provider 实现相同形状。
+
+```ts
+// 请求。Provider 将它映射为原生机制，例如 Responses API 上的
+// background: true，或一次 batch submission。
+interface SimpleStreamOptions extends StreamOptions {
+  deferred?: boolean | { window?: "15m" | "1h" | "24h" };
+  // ...其他 options
+}
+
+// 响应。延迟请求快速返回句柄而不是内容。消息像任何助手消息一样
+// 持久化；句柄是恢复所需的持久事实。
+type StopReason = "pending" | "stop" | "length" | "toolUse" | "error" | "aborted" | "deferred";
+// Agent 侧 settled-result 收窄。
+type TerminalStopReason = Exclude<StopReason, "pending">;
+type SettledAssistantMessage = AssistantMessage & { stopReason: TerminalStopReason };
+
+interface DeferredHandle {
+  provider: string;
+  modelId: string;
+  api: string;
+  id: string;                    // provider token：response id 或 batch id + row
+  expiresAt?: number;            // Unix 毫秒
+  pollAfterMs?: number;          // provider 提示
+  data?: JsonValue;              // provider 转换数据
+}
+
+interface AssistantMessage {
+  // ...其他字段
+  stopReason: StopReason;
+  deferred?: DeferredHandle;     // 仅当 stopReason === "deferred" 时存在
+}
+
+// 由 stream、image 和 deferred provider 操作共享的带鉴权 HTTP 请求管道。
+// 生成和流式传输控制不属于该接口。
+interface ProviderRequestOptions<TModel = Model<Api>> {
+  signal?: AbortSignal;
+  /** 这个 pi-ai 逻辑操作的显式父级。stream、simple-stream、deferred
+      fetch/cancel 和 image options 都继承它。 */
+  telemetryContext?: TelemetryContext;
+  apiKey?: string;
+  fetch?: FetchFunction;
+  env?: ProviderEnv;
+  onPayload?: (payload: unknown, model: TModel) =>
+    unknown | undefined | Promise<unknown | undefined>;
+  onResponse?: (response: ProviderResponse, model: TModel) => void | Promise<void>;
+  headers?: ProviderHeaders;
+  timeoutMs?: number;
+  maxRetries?: number;
+  maxRetryDelayMs?: number;
+}
+
+interface DeferredFetchOptions extends ProviderRequestOptions<Model<Api>> {
+  /** provider long-poll 最长持续时间。省略或为 0 表示只检查一次。 */
+  wait?: number;
+}
+
+type DeferredCancelOptions = ProviderRequestOptions<Model<Api>>;
+
+// 兑换发生在 provider 上。两个方法都是可选的：它们的存在就是能力信号。
+// 没有它们的 provider 从不返回 stopReason "deferred"，也忽略 deferred 请求选项。
+export interface ProviderStreams {
+  stream(model: Model<Api>, context: Context, options?: StreamOptions): AssistantMessageEventStream;
+  streamSimple(model: Model<Api>, context: Context, options?: SimpleStreamOptions): AssistantMessageEventStream;
+
+  /** 兑换句柄。返回类型与 streamSimple 相同；下游代码完全一致。
+      轮询或重新附着直到 terminal，然后发出普通事件和最终消息。
+      解析状态全部 in-band：
+      - ready:          普通消息（stop | toolUse | length）
+      - still pending:  stopReason "deferred"，携带相同句柄（wait 过期后；
+                        wait: 0 只检查一次）
+      - terminal:       stopReason "error"（过期、未知、已消费） */
+  fetchDeferred?(model: Model<Api>, handle: DeferredHandle,
+                 options?: DeferredFetchOptions): AssistantMessageEventStream;
+
+  /** 尽力而为；不支持取消的 provider 省略它。 */
+  cancelDeferred?(model: Model<Api>, handle: DeferredHandle,
+                  options?: DeferredCancelOptions): Promise<void>;
+}
+```
+
+`ProviderRequestOptions.telemetryContext` 被 `StreamOptions`、`SimpleStreamOptions`、`DeferredFetchOptions`、`DeferredCancelOptions` 和 `ImagesOptions` 继承；provider、`Models`、`ImagesModels` 以及直接 stream/image 分发都原样保留它。内置 `streamSimple()` 实现转换为 provider 特有 stream options 时，`buildBaseOptions()` 也会保留它。
+
+`pending` 只属于可变的实时流消息。请求包装器结果使用 `SettledAssistantMessage`；harness 写入的 entry、持久 usage record 和 settled `pi.ai.request` span 不能包含 `pending`。遥测把终端 `toolUse` 规范化为 `tool_use`。
+
+harness 使用带鉴权的 `Models` 分发面，而不是直接访问 provider 对象：
+
+```ts
+type ModelsDeferredFetchOptions = DeferredFetchOptions & ModelsRequestTransforms;
+type ModelsDeferredCancelOptions = DeferredCancelOptions & ModelsRequestTransforms;
+
+interface Models {
+  // 其他方法
+  fetchDeferred(model: Model<Api>, handle: DeferredHandle,
+                options?: ModelsDeferredFetchOptions): Promise<AssistantMessage>;
+  cancelDeferred(model: Model<Api>, handle: DeferredHandle,
+                 options?: ModelsDeferredCancelOptions): Promise<void>;
+}
+```
+
+`Models.fetchDeferred` 和 `Models.cancelDeferred` 委托给 provider 方法，走正常的模型解析和鉴权（credential store、过期 token、header 合并）。它们的 options 携带普通 HTTP 设置、生命周期回调、模型转换；fetch options 还携带 provider long-poll 时长。返回 `stopReason: "deferred"` 的 provider 必须实现 fetch；取消是尽力而为。
+
+terminal fetch 结果对本次 run 是终局：harness 追加错误消息并使操作失败，从不自动发起替代请求；rejected fetch promise 也转换成相同 `stopReason: "error"` 消息形式，让预期的 provider 和鉴权失败保持 in-band。返回仍为 deferred 的消息时，harness 要求完整句柄等于持久句柄：provider 不能在不写入的情况下替换持久句柄数据，不匹配是缺陷。
+
+延迟助手消息只带句柄，不带内容。session context projection 把它排除在 provider context 外；持久挂起和兑换使用持久化的句柄。
+
+停止原因规范化是 adapter 的职责，harness 只根据规范化后的值分支。以 OpenAI Responses 为例：`incomplete_details.reason === "max_output_tokens"` 映射为 `stopReason: "length"`；`content_filter` 映射为不可重试的 `stopReason: "error"`。Adapter 可以保留 provider 原因作 `rawStopReason` 用于诊断；核心逻辑从不读取它。
+
+## 17. Fork 与 subagent
+
+session repository 上只有一个复制原语：
+
+```ts
+type ForkOptions =
+  | { scope?: "branch"; entryId?: string; position?: "before" | "at" }  // 一条路径，根到 fork 点
+  | { scope: "tree" };                                                  // 所有 branch 的全部 entries
+
+repo.fork(source, options & { id?, parentSessionId? }): Promise<Session>;
+repo.create({ id?, parentSessionId? }): Promise<Session>;
+```
+
+- 只复制 entries。JSONL 复制它们时不带 `lane`，最后写入最终 lane 指针。不复制 records 或队列：fork 从 idle 开始，每个 lane 问题都回答“没有未完成操作”。没有 record 也意味着没有台账：fork 的 token 和成本统计从零开始——成本属于产生它的 session；entry usage 快照仍可显示。它的 `messageCount` 用所有复制的消息条目初始化。
+- Lanes：`scope: "branch"` → fork 只有位于 fork 点的 `main`。`scope: "tree"` → 复制每个 lane 名称和叶子指针。两种模式都不复制操作日志或队列，因此每个被 fork 的 lane 都是 idle。
+- Facts：`scope: "tree"` 全部复制；`scope: "branch"` 总是复制名称，标签只在目标 entry 被复制时复制。
+- Fork 点可以是任意消息 entry。tip 位于 tool batch 中间的副本仍然可以 prompt：pi-ai 的 transformMessages 在请求构建时为孤立 tool calls 插入合成的空结果。
+- 源 session 不受影响；在运行中复制只读已提交前缀。
+- 关系由 `parentSessionId` 表示，由 `fork()` 设置，也可在 `create()` 设置——这是 subagent 父子追踪和导出包的基础。
+- Subagent tool 从调用参数确定性地派生子 session id（`f(parentSessionId, toolCallId)`）：安全重放会重新附着到同一个子 session，不会生成孪生；即使崩溃吞掉了 tool 结果，子 session 也能从父 session 发现。
+- 重申 Part I 的策略：与其 channel 共享历史的平台线程是一个 lane；fork 用于隔离——subagent、导出、克隆。不需要隔离时，subagent 也可以跑在父 session 的一个 lane 上。
+
+## 18. Telemetry
+
+Telemetry 使用显式 context 传播。核心代码不使用 `AsyncLocalStorage`、全局 current-span 状态或运行时专属 context API：pi 要运行在 Node、Bun、浏览器和 worker 中，所以任何运行时的 ambient-context 机制都不能作为核心抽象。Adapter 可以在内部使用 ambient context——例如 OpenTelemetry adapter 可以激活原生子 context，让 HTTP 自动插桩正确附着——但 pi 始终显式传递父级。
+
+Pi 不自带 exporter，也不要求后端专属 telemetry 实现。它自带 `InMemoryTelemetryContext` 作为确定性的后端中立参考实现；应用可以用它做进程内捕获，也可以提供把 span 桥接到 OTel、Sentry、日志或其他后端的 `TelemetryContext` adapter。Adapter 被信任遵守下方回调契约。它拥有后端 id 和原生 context 对象；核心从不携带 trace-id 管道。
+
+### 包所有权
+
+通用契约、schema 定义机制、共享 no-op 和 in-memory 参考实现位于 `packages/telemetry/src/`，从 `@earendil-works/pi-telemetry` 导出。运行器无关的一致性用例位于 `packages/telemetry/src/testing/`，从 `@earendil-works/pi-telemetry/testing` 导出。Pi-ai 只为请求 options 导入 `TelemetryContext`；它不拥有 span schema 或 helper，自身也不发出 telemetry。`packages/agent/src/harness/telemetry.ts` 同时拥有 `AI_TELEMETRY_SCHEMA` / `startAiSpan()` 和 `HARNESS_TELEMETRY_SCHEMA` / `startHarnessSpan()`，以及组合两者类型化词表但不合并 schema 数据或版本的 readonly `AGENT_TELEMETRY_SCHEMAS` tuple。Agent 包根目录再导出这些领域 schema、helper、tuple 和通用 telemetry 面。这里有一个通用契约和一个领域 schema owner。
+
+`AgentHarnessOptions.telemetryContext` 默认为 no-op context，agent 侧请求包装器通过 agent 拥有的 AI schema 发出 `pi.ai.request`。
+
+两个 schema 都归 pi 所有。Span 名称使用 `pi.ai.*`、`pi.harness.*` 和 `pi.session.*` 家族；attributes 使用相同的 pi 自有 `pi.*` 词表，不采用外部语义约定命名空间。Adapter 在需要时翻译；无论后端约定如何变化，发出的 pi 词表保持稳定。
+
+### Context contract
+
+```ts
+type AttributeValue =
+  | string
+  | number
+  | boolean
+  | readonly string[]
+  | readonly number[]
+  | readonly boolean[];
+
+interface SpanAttributes {
+  [name: string]: AttributeValue | undefined;
+}
+
+interface SpanOptions {
+  name: string;
+  attributes?: SpanAttributes;
+}
+
+type SpanStatus =
+  | { status: "ok" }
+  | { status: "error"; error?: { name: string; message: string } };
+
+interface TelemetryContext {
+  startSpan<T>(
+    options: SpanOptions,
+    callback: (span: TelemetrySpan) => T | Promise<T>,
+  ): Promise<T>;
+}
+
+interface TelemetrySpan extends TelemetryContext {
+  addEvent(name: string, attributes?: SpanAttributes): void;
+  setAttributes(attributes: SpanAttributes): void;
+  setStatus(status: SpanStatus): void;
+}
+```
+
+telemetry 包导出共享 no-op context 和确定性 in-memory 参考 context。没有应用 context 时，harness 和兼容包装器选择 no-op。在这个契约下，`startSpan()` 创建子 span 并同步地、恰好一次地调用其回调，然后才返回 promise。span 保持打开直到回调值或 promise settle：
+
+- 返回或 resolve：默认 status 为 `ok`，然后自动结束；
+- 同步 throw：自动设置 error status 并结束后，返回用同一值 reject 的 promise；
+- 异步 rejection：自动设置 error status 并结束，然后用同一值 reject；
+- 以值表示的预期失败：callback 在返回前调用 `setStatus({ status: "error", ... })`；
+- 重复调用 `setStatus()` 采用 last-write-wins；自动完成从不覆盖显式 status；
+- `setAttributes()` 合并键；后定义的值覆盖先前值，`undefined` 被忽略；
+- 对已 settle span 的调用是惰性的，从不抛出。
+
+Adapter 保留 callback 的结果和错误。它们的 recording 方法必须同步、被动且不抛出；异步 exporter 内部缓冲并按自己的节奏 flush。如果原生 span 创建或记录失败，adapter 会压制该失败，原子地忽略失败的记录调用，替换为 no-op 行为，并且仍然恰好一次调用业务 callback。不符合契约的 adapter 是应用缺陷。no-op 实现用一个共享惰性 span 调用 callback，不为每个 span 分配对象，也不检查或保留 attributes，同时保留 callback 行为。真实 adapter 的关闭时 flushing 是应用的责任。
+
+harness runtime 把 context 作为普通实参传给每个有效果的实现边界。核心函数都不查找当前 context：
+
+```ts
+streamAssistant(messages, configWithTelemetryContext, emit);
+prepareToolCall(call, tools, callbacks, telemetryContext, signal);
+executeToolCall(prepared, emit, telemetryContext, signal);
+finalizeToolCall(prepared, executed, callbacks, telemetryContext, signal);
+fx.appendEntry(entry, telemetryContext);
+fx.runHook(name, event, telemetryContext);
+```
+
+A `TelemetrySpan` 同时也是显式子 `TelemetryContext`。把 callback span 传给下层工作即可通过普通调用图建立嵌套。下面的 schema 类型化 API 通过给每个 callback 一个绑定到当前 live span 的 child starter 自动完成交接；它不使用环境可变 context。每个 `Effects` 方法都接收父级参数，并行 tools 使用独立子 span，因此也拥有独立父 context。
+
+### 类型化 schema
+
+低层 adapter 接受开放的 `SpanAttributes` bag。Pi instrumentation 从不直接构造无类型的 span 名称或 attribute bag。Agent 包为此导出两个普通的可序列化领域 schema 对象及其类型化 helper。
+
+```ts
+type TelemetryAttributeType =
+  | "string"
+  | "number"
+  | "boolean"
+  | "string[]"
+  | "number[]"
+  | "boolean[]";
+
+interface TelemetryAttributeMetadata {
+  description: string;
+  sensitive?: boolean;
+  cardinality?: "low" | "high";
+}
+
+type TelemetryAttributeDefinition = TelemetryAttributeMetadata & (
+  | { type: "string"; values?: readonly string[]; examples?: readonly string[] }
+  | { type: "number"; values?: readonly number[]; examples?: readonly number[] }
+  | { type: "boolean"; values?: readonly boolean[]; examples?: readonly boolean[] }
+  | { type: "string[]"; elementValues?: readonly string[]; examples?: readonly (readonly string[])[] }
+  | { type: "number[]"; elementValues?: readonly number[]; examples?: readonly (readonly number[])[] }
+  | { type: "boolean[]"; elementValues?: readonly boolean[]; examples?: readonly (readonly boolean[])[] }
+);
+
+type TelemetryStartAttributeDefinition = TelemetryAttributeDefinition & { required: boolean };
+type TelemetryEventAttributeDefinition = TelemetryAttributeDefinition & { required: boolean };
+
+interface TelemetryEventDefinition {
+  description: string;
+  attributes: Record<string, TelemetryEventAttributeDefinition>;
+}
+
+type TelemetryParentDefinition =
+  | { kind: "any" }
+  | { kind: "root_or_external" }
+  | { kind: "spans"; spans: readonly string[] };
+
+interface TelemetrySpanDefinition {
+  description: string;
+  /** 穷举允许的父规则。"external" 表示 pi schemas 之外的调用方 span。 */
+  parents: TelemetryParentDefinition;
+  startAttributes: Record<string, TelemetryStartAttributeDefinition>;
+  /** 仅用于完成时补充。每个 end attribute 都可选；无论设置了哪些
+      attributes，startSpan() 都负责结束 span。 */
+  endAttributes: Record<string, TelemetryAttributeDefinition>;
+  events?: Record<string, TelemetryEventDefinition>;
+  status: { default: "ok"; errorWhen: string };
+}
+
+interface TelemetrySchemaDefinition {
+  version: number;
+  spans: Record<string, TelemetrySpanDefinition>;
+}
+
+declare function defineTelemetrySchema<const T extends TelemetrySchemaDefinition>(schema: T): T;
+```
+
+`defineTelemetrySchema()` 是类型化 identity helper；返回值是普通可序列化数据，不是校验 runtime。Span 名称、attribute 类型、必需键和字面量 `values` 都从该值推断。下表是规范性领域词表；`packages/agent/docs/telemetry-schema.md` 是生成的参考文档。
+
+`createTypedSpanStarter(context, schemas)` 把一个显式父 context 绑定到非空 readonly schema tuple 的组合 span 词表。各 schema 保留独立对象、所有权、文档和版本；tuple 不是第三个合并后的 schema。Span 名称在整个 tuple 内唯一，重复的字面量名称会导致编译失败。schema 值本身只是类型推断输入，不在运行时被检查或保留。
+
+返回的 `TypedSpanStarter` 是按名称重载的集合，只接受已声明字面量名称和该 span 的精确 start attributes。union 类型的名称必须在调用前收窄，使 runtime 名称不能与其他 span 的 attributes 配对。它的 callback 接收 schema 作用域内的 span，以及另一个绑定到 callback span 的同名 schema tuple starter。child starter 因此能在没有环境 context 或手工 rebind 的情况下创建正确嵌套 span；并发 callback 收到独立的 starter：
+
+```ts
+const AGENT_TELEMETRY_SCHEMAS = [
+  AI_TELEMETRY_SCHEMA,
+  HARNESS_TELEMETRY_SCHEMA,
+] as const;
+
+const startSpan = createTypedSpanStarter(
+  telemetryContext,
+  AGENT_TELEMETRY_SCHEMAS,
+);
+
+await startSpan("pi.harness.step", stepAttributes, async (stepSpan, startChildSpan) => {
+  stepSpan.setAttributes({ "pi.step.outcome": "succeeded" });
+  return startChildSpan("pi.ai.request", requestAttributes, async (requestSpan) => {
+    requestSpan.setAttributes({ "pi.ai.response.stop_reason": "stop" });
+  });
+});
+```
+
+Callback span 仍保留开放泛型方法 `TelemetryContext.startSpan()`，当集成有意跨越词表时，它可以传给另一个 schema tuple 的 starter。`createTypedSpanStarter()` 自身不添加 runtime span、schema 校验、父规则强制执行或持久状态。
+
+以下表格是 schema 对象的规范输入。`!` 表示必需 start attribute；`?` 表示可选 start attribute。所有 end attribute 都是可选补充。数组元素闭集使用 `elementValues`；其他闭集使用 `values`。除了表格中的显式 status 规则外，context contract 的自动 throw/reject 规则适用于每个 span。
+
+#### AI request schema
+
+`AI_TELEMETRY_SCHEMA` 不声明 pi 写入的 span event，只有一个 span。父规则为 `{ kind: "any" }`：
+
+| span | 允许父级 | status |
+|---|---|---|
+| `pi.ai.request` | root 或任何 caller span | throw/reject，或返回 stop reason 为 `error` 的结果时报错；`aborted` 和 `deferred` 是正常结果 |
+
+| `pi.ai.request` start attribute | 类型 | 要求 | 值 / 含义 |
+|---|---|---|---|
+| `pi.ai.operation` | string | ! | `stream`、`fetch_deferred`、`cancel_deferred`、`generate_images` |
+| `pi.ai.provider` | string | ! | 选定的 provider id |
+| `pi.ai.model` | string | ! | 请求的 model id |
+| `pi.ai.api` | string | ! | provider API id |
+| `pi.ai.streaming` | boolean | ! | 该操作是否返回流 |
+| `pi.ai.deferred` | boolean | ? | 操作是否请求或参与延迟执行 |
+
+| `pi.ai.request` end attribute | 类型 | 值 / 含义 |
+|---|---|---|
+| `pi.ai.response.model` | string | provider 报告的具体响应模型 |
+| `pi.ai.response.id` | string | provider response id；高基数 |
+| `pi.ai.response.stop_reason` | string | `stop`、`length`、`tool_use`、`error`、`aborted`、`deferred`；终端 `toolUse` 规范化为 `tool_use`，`pending` 永不记录 |
+| `pi.ai.http.status_code` | number | provider 路径暴露的最终 HTTP status |
+| `pi.ai.usage.input_tokens` | number | 报告的输入 token |
+| `pi.ai.usage.output_tokens` | number | 报告的输出 token |
+| `pi.ai.usage.cache_read_tokens` | number | 报告的缓存读取 token |
+| `pi.ai.usage.cache_write_tokens` | number | 报告的缓存写入 token |
+| `pi.ai.usage.reasoning_tokens` | number | 报告的输出中 reasoning 子集 |
+| `pi.ai.usage.total_tokens` | number | 报告的总 token |
+| `pi.ai.usage.cost` | number | 报告的总成本 |
+| `pi.ai.stream.chunk_count` | number | 流式 update chunk 数量，不含 chunk 内容 |
+| `pi.ai.stream.time_to_first_chunk_ms` | number | 到第一个 update chunk 的毫秒数 |
+| `pi.ai.error.type` | string | 低基数的 provider 或 transport 错误类 |
+
+Schema 不声明 per-chunk telemetry event。助手流携带实时 delta，而遥测只记录聚合 chunk 数量和首 chunk latency。默认 telemetry 从不包含请求或响应内容。
+
+#### Harness schema
+
+三个操作 span 共享 `pi.session.id`（string、必需、高基数）、`pi.lane.name`（string、必需、高基数）、`pi.operation.id`（string、必需、高基数）和 `pi.operation.recovery`（boolean、必需）。每个还要求 `pi.operation.kind`，且只允许与该 span 匹配的字面量。操作 error status 可以添加可选 end attributes `pi.error.code` 和 `pi.error.type`，两者都是低基数字符串；自由格式错误消息属于 status 诊断，不是 schema attributes。
+
+| span | 允许父级 | start attributes | 可选 end attributes | 显式错误 status |
+|---|---|---|---|---|
+| `pi.harness.run` | root 或应用 span | 通用操作属性加 `pi.operation.kind`: `run` | `pi.operation.outcome`: `completed`, `aborted`, `failed`, `suspended` | outcome 为 `failed` |
+| `pi.harness.compaction` | root 或应用 span | 通用操作属性加 `pi.operation.kind`: `compaction` | `pi.operation.outcome`: `completed`, `declined`, `aborted`, `failed` | outcome 为 `failed` |
+| `pi.harness.navigation` | root 或应用 span | 通用操作属性加 `pi.operation.kind`: `navigation` | `pi.operation.outcome`: `completed`, `declined`, `aborted`, `failed` | outcome 为 `failed` |
+| `pi.harness.checkpoint` | `pi.harness.run` | `pi.lane.name`!、`pi.operation.id`!、`pi.checkpoint.kind`!: `normal`, `failure_drain`, `abort_reconcile` | 无 | 只有 throw/reject |
+| `pi.harness.turn` | `pi.harness.run` | `pi.lane.name`!、`pi.operation.id`!、`pi.turn.id`! string，高基数 | 无 | 只有 throw/reject |
+| `pi.harness.step` | `pi.harness.turn`、`pi.harness.checkpoint`、`pi.harness.compaction` 或 `pi.harness.navigation` | `pi.lane.name`!、`pi.operation.id`!、`pi.step.kind`!: `assistant`, `compaction`, `branch_summary`; `pi.step.attempt`! number; `pi.compaction.reason`?: `manual`, `threshold`, `overflow` | `pi.step.outcome`: `succeeded`, `retry`, `failed`, `aborted`, `deferred`, `overflow` | outcome 为 `retry` 或 `failed` |
+| `pi.harness.tool` | 实时工作用 `pi.harness.turn`；恢复用 `pi.harness.run` | `pi.lane.name`!、`pi.operation.id`!、`pi.turn.id`? string 高基数、`pi.tool.name`! string、`pi.tool.call_id`! string 高基数、`pi.tool.replay`!: `never`, `safe`; `pi.tool.recovery`! boolean | 原始阶段 2 执行结果的 `pi.tool.is_error` boolean | `pi.tool.is_error: true` |
+| `pi.harness.hook` | root 或当前 harness/AI scope | `pi.lane.name`!、`pi.operation.id`? string 高基数、`pi.hook.name`! string，值来自 `HookName`、`pi.hook.registration_id`? string | `pi.hook.outcome`: `completed`, `skipped`, `blocked`, `failed` | handler throw，包括失败关闭的 `before_tool` |
+| `pi.harness.sleep` | `pi.harness.step` 或 `pi.harness.run` | `pi.operation.id`!、`pi.sleep.delay_ms`! number | `pi.sleep.outcome`: `elapsed`, `aborted` | 只有 throw/reject |
+| `pi.harness.event_handler` | root 或发出事件的 scope | `pi.event.type`! 低基数字符串，值为第 10 节事件判别式、`pi.lane.name`? string 高基数 | 无 | listener throw；span reject 后事件系统捕获它 |
+| `pi.session.write` | root 或当前 harness scope | `pi.lane.name`!、`pi.operation.id`? string 高基数、`pi.session.mutation`!: `entry`, `record`, `lane`, `fact`; `pi.session.item_type`? string | 已提交 API 暴露时的 `pi.session.seq` number | storage rejection |
+
+父列直接映射到 `TelemetryParentDefinition`：“root or application span” 是 `root_or_external`；“root or the current scope” 和 “root or any caller span” 是 `any`；每个有限的 pi span 列表都用 `spans` 并精确列出这些名称。`pi.harness.tool` 只包装阶段 2（`executeTool`），并在 `after_tool` finalization 前 settle：`pi.tool.is_error` 描述原始执行结果；没有最终 `terminate` attribute；从未执行的 blocked 或无效调用不发出 tool span。实时执行提供活跃 turn id，并把 span 父级设为 `pi.harness.turn`；reconciliation 没有持久 turn id，省略它并把 span 直接父级设为 resumed 的 `pi.harness.run` invocation。`pi.hook.name` values 数组正好是 `before_run`、`before_resume`、`before_run_end`、`transform_context`、`before_request`、`before_payload`、`after_response`、`before_tool`、`after_tool`、`before_compaction` 和 `before_navigation`。`pi.event.type` values 数组包含第 10 节目录中的每个 `type` 判别式，没有其他值。`pi.harness.hook` 描述一次已注册 handler 调用，因此孤立的 handler 失败有自己的 status，不会让外层 run 失败。`pi.harness.event_handler` 对被动 listener 失败做同样处理。Harness schema 初始不声明 span events。
+
+动态 id 和名称是 attributes，绝不是 span 名称。Schema definitions 是 pi instrumentation 可以发出的穷举词表。
+
+Agent 包导出两个 schema、`AGENT_TELEMETRY_SCHEMAS`、每个 span-name union、按名称的 start/end/组合 attribute 类型、event 类型、discriminated span unions 以及类型化 `startAiSpan()` / `startHarnessSpan()` helper。Telemetry 包导出 `createTypedSpanStarter()` 和 `TypedSpanStarter`；一个 scope 同时需要 AI 请求和 harness span 时，调用方可绑定 agent tuple。每个类型化 starter 或领域 helper 只接受该 span 的 start attributes；其 callback 接收 live span 的 schema 作用域视图，其中 `setAttributes()` 只接受该 span 的可选 end attributes，`addEvent()` 只接受声明的事件名和属性。缺少必需 attributes、重复的组合 span 名称、未知 attributes、类型不匹配和非法闭集值都会在编译期被拒绝。TypeScript 不试图证明任何 end setter 运行过；自动 settle 始终由 `startSpan()` 负责。作用域视图擦除为泛型 `TelemetrySpan`；生产环境不执行 schema 校验。
+
+Schema 对象也是文档来源。通过包脚本 `generate-telemetry-docs` 和 `check:telemetry-docs` 暴露的 `packages/agent/scripts/generate-telemetry-docs.ts`，在 `packages/agent/docs/telemetry-schema.md` 生成合并后的 AI 请求和 harness 参考文档。这个 Markdown 文件是仓库文档，不是 npm package 文件；发布消费者从 agent 包根目录导入两个可序列化 schema 对象。Schema `version` 从 1 开始；兼容性新增和破坏性重命名、删除、类型变化或含义变化记录在 package changelog。只有真实消费者需要自动翻译时才添加显式迁移 metadata。
+
+### Effects 与嵌套
+
+Telemetry wrapper 遵循普通工作的所有权。Procedure 层包装编排 scope——operation invocation、checkpoint、turn 和可重试 step——并把 callback 的 `TelemetrySpan` 作为父参数传给下层工作。`Effects` 包装自己拥有的原子 effect。Telemetry 不是 gated action vocabulary 的一部分，也不创建持久崩溃边界。
+
+```ts
+async function assistantAttempt(
+  turnContext: TelemetryContext,
+  attempt: number,
+  resultEntryId: string,
+): Promise<SettledAssistantMessage> {
+  return startHarnessSpan(
+    turnContext,
+    "pi.harness.step",
+    {
+      "pi.lane.name": state.lane,
+      "pi.operation.id": op.id,
+      "pi.step.kind": "assistant",
+      "pi.step.attempt": attempt,
+    },
+    async (stepContext) => {
+      await fx.appendRecord(
+        stepAttempt(op.id, "assistant", attempt, resultEntryId),
+        stepContext,
+      );
+      const final = await fx.streamAssistant(assistantRequest(state), stepContext);
+      await fx.appendRecord(
+        usageRecord("assistant", op.id, resultEntryId, attempt, final),
+        stepContext,
+      );
+      return final;
+    },
+  );
+}
+```
+
+第 14 节的 `streamAssistant()` 是逻辑模型请求 wrapper。它使用 `startAiSpan()` 启动 `pi.ai.request`，把 callback span 作为 `ProviderRequestOptions.telemetryContext` 通过 `Models` 向下传，只记录 schema 声明的聚合响应字段，并返回同一个助手消息。`Effects.executeTool()` 类似地只用 `pi.harness.tool` 包装阶段 2；hook 和 event runner 遵循同样的显式父模式。
+
+| owner / 方法 | 目标 telemetry |
+|---|---|
+| operation dispatcher | `pi.harness.run`、`pi.harness.compaction` 或 `pi.harness.navigation` |
+| checkpoint / turn / step procedure scopes | 对应的 `pi.harness.*` scope span |
+| `appendEntry`、`appendRecord`、`moveLane`、`setFact` 和会写入的条件提交 | `pi.session.write`；条件性不写的结果不发出 write span |
+| `streamAssistant`、`fetchDeferred`、`cancelDeferred` | 带匹配 `pi.ai.operation` 的 `pi.ai.request` |
+| `executeTool` | `pi.harness.tool` |
+| `runHook` | 每个已注册 handler 一个 `pi.harness.hook` |
+| `sleep` | `pi.harness.sleep` |
+| 被动事件投递 | 每个监听器一个 `pi.harness.event_handler` |
+
+Context object 和 adapter 原生 span 是进程内 capability。两者都不会持久化到 record、entry、snapshot、event 或 deferred handle。
+
+### Span lifetime
+
+一个 operation span 包装一次被接受的进程内操作工作调用。初始 `prompt()` / `compact()` / `navigateTree()` 只在其 `operation_started` 接受提交之后启动 span；准入 `Err`（如 `LaneBusy`、`InvalidMessage`、`NothingToCompact`、`UnknownTarget`）不发出 operation span。`resume()` 在 Lane reservation、identity checks 和其他预期 rejection 检查通过后才启动 wrapper。每次成功 resume 准入都会得到另一个 span，携带相同持久 operation id 且 recovery 为 `true`。重复的 deferred polling 因此产生由 operation id 关联的多个普通 wrapper span——不需要额外的公共生命周期概念或持久 telemetry state。
+
+- 返回的 `completed`、`declined`、`aborted` 或 `suspended` 结果正常 resolve；instrumentation 可以用匹配的允许结果补充 span；
+- 返回的 `failed` 结果显式设置错误 status，但按公共 API 要求仍正常 resolve；也可以用 outcome `failed` 补充 span；
+- `close()`、harness fault 或不变量缺陷 reject callback，因此本地 span 自动以错误结束；
+- 真实进程死亡不运行清理，后端可能丢失或保留未完成 span；下一个进程只在 `resume()` 时创建新 span。
+
+如果设置 outcome attribute，run span 从不使用 `declined`；该值只存在于 compaction 和 navigation schema。Trace context 不持久化。持久化后端专属 trace token 会把恢复数据耦合到一个 telemetry 系统。服务层拥有相关信息时，可以把 resumed span 链接到较早 trace。
+
+Span tree 跟随 execution scopes：
+
+```text
+pi.harness.run
+├─ pi.harness.checkpoint
+│  └─ pi.harness.step          compaction, attempt
+├─ pi.harness.turn
+│  ├─ pi.harness.step          assistant, attempt
+│  │  ├─ pi.ai.request         provider, model, stop reason
+│  │  └─ pi.harness.sleep      retry delay
+│  └─ pi.harness.tool          tool name, call id, replay
+├─ pi.harness.hook
+├─ pi.harness.event_handler
+└─ pi.session.write            entry/record/lane/fact
+
+pi.harness.compaction          手动操作
+pi.harness.navigation
+```
+
+Procedure 层拥有 operation、checkpoint、turn 和 step scope。`Effects` 拥有 session 写入、阶段 2 tool 执行、hook 和 sleep。围绕 `Models` 的请求分发 wrapper 拥有 `pi.ai.request`；被动事件投递拥有 handler span。每个 owner 都显式接收自己的父 context。
+
+### 安全性与测试
+
+默认 attributes 只携带 schema 声明的 id、名称、数量、时长、停止原因、status code 和 usage。它们绝不能携带 prompt、completion、tool 参数、tool 输出、文件内容、provider payload、header 或凭证。Schema 字段显式标记未来可能敏感或高基数的 attribute。
+
+Telemetry 与 events、hooks 保持分离：
+
+- Events 是公共的实时观察。
+- Hooks 可以改变执行。
+- Telemetry 是被动的进程内诊断。
+
+## 19. 测试策略
+
+三层测试。每层验证不同的主张；谁也不能替代谁。
+
+### Tier A —— 归约与恢复
+
+通过公共 `Session` API（`appendRecord`、低层 `appendEntry`）预填充第 6 节某个崩溃状态的 records 和 entries，打开 harness，调用 `resume()`，断言持久结果。
+
+```ts
+await session.appendRecord(opStarted("run", { originalPrompt, initialMessages: [userEntry] }));
+await session.appendEntry(userEntry, "main");
+await session.appendRecord(stepAttempt("assistant", 1));
+await session.appendEntry(assistantWithToolCall, "main");
+await session.appendRecord(toolStarted({ replay: "safe", resultEntryId: "result-1" }));
+// 这个持久前缀是 X3。
+
+const { harness, suspended } = await AgentHarness.create(options);
+expect(suspended).toHaveLength(1);
+expect((await harness.resume()).ok).toBe(true);
+```
+
+覆盖范围：每个 X1–X5 tool 状态；replay safe/never/changed 声明；批次中每个源顺序位置；证明从不执行的截断（`length`) 批次；每个持久点前后 abort；带或不带后续被消费输入的终端失败 marker；缺失初始消息；pending、取消和 abort 杀掉的队列条目；延迟写；延迟句柄（pending、ready、terminal、rejected fetch、句柄不匹配、abort）；未完成 step 在消费新 checkpoint 输入之前恢复——包括被打断重试期间接受的 steering；跨重启的尝试上限，包括 auto-compaction 耗尽；第 6 节表格中每个溢出崩溃点；第 6 节表格中移动后的导航状态；第 5 节有效性拒绝；以及只完成一半的恢复（同一前缀跑两次恢复）。
+
+In-memory backend 是参考。Parity suite 用相同 setup 跑 memory、JSONL 和 SQLite；一个 case 在两个 Lane 上并发写入并断言唯一递增 `seq` 和相同 `getLog()` 顺序；另一个 case 断言所有后端拒绝同一批非 JSON payload。
+
+### Tier B —— writer 一致性
+
+Tier A 假定实时执行写了正确前缀；Tier B 验证它。对 instrumented `Session` 运行公共 harness，记录每个 entry（`E`）、record（`R`）、lane move（`L`）、fact（`G`）和 hook（`H`）。对照第 6 节 traces 断言精确顺序：单 tool run、重试、terminal failure、tool 期间的 steering、队列取消、finish-boundary 顺序、turn 中途的 deferred write、tool 期间 abort、auto-compaction、context overflow（discard、guard、钩子提供）、手动压缩、导航（move-first）、deferred suspension 和每种 fetch 结果。这一层抓住关键回归类别：effect 先于其 intent record 启动。
+
+Tier B 还可执行地断言 append-only-context 不变量（第 4 节）：在一次 run 内，每个 faux-provider request 的 message list 都是上一个请求的精确前缀扩展——除了 compression entry 这一处被批准的失效点。只要写路径向尾部之前插入内容，KV-cache discipline 就会从文字变成失败测试。
+
+### Tier C —— 确定性交错
+
+对真实 `AgentHarness`、faux provider 和真实 backend 使用 `drive: "manual"`。门是唯一 test hook；不存在第二台机器。
+
+```ts
+const { harness } = await AgentHarness.create({ session, models, model, tools: [calc], drive: "manual" });
+const promptResult = harness.prompt("calculate");
+
+while ((await harness.peekAction())?.kind !== "execute_tool") await harness.executeAction();
+
+// X3：intent 已持久，effect 未开始
+const started = await session.findRecords({ lane: "main", type: "tool_started" });
+expect(await session.getEntry(started[0]!.resultEntryId)).toBeUndefined();
+
+expect((await harness.steer("focus on tests")).ok).toBe(true);   // 表面不过门
+await harness.runToCompletion();
+expect((await promptResult).ok).toBe(true);
+```
+
+崩溃模拟是在选定边界调用 `close()`，然后重新打开同一 backend 并 resume。崩溃点机械派生，而不是手工挑选：以 manual 模式驱动每条第 6 节 trace，在**每次** `executeAction()` 后 snapshot backend，然后重新打开每个 snapshot 并 `resume()`——且每个 snapshot 跑两次 recovery，证明半完成恢复是安全的。给 trace 新增 effect 会自动获得崩溃覆盖。覆盖范围：**竞态目录（第 15 节）每一行的两种顺序**；在任意 action 之间注入输入；可取消 effect 停住时和运行中的 abort；以及同一脚本化 provider 下 automatic 与 manual drive 产生相同的持久日志和结果。
+
+Tier C 全程断言的门不变量：
+
+- 每次 `resume()` 结果之后，重新计算的归约 `laneState` 等于 live `LaneState`（第 15 节不动点自检触发并通过）。
+- `peekAction()` 无副作用，并在 `executeAction()` 前保持稳定。
+- `executeAction()` 只释放 peeked action，从不释放其他内容。
+- 在一个 action 前停止，正好留下其前面的持久前缀。
+- 停住期间不发生存储写入，也不发生 provider 或 tool 调用（第 15 节构造规则）。
+- 每个被接受的操作恰好获得一次 `operation_finished`，除非它挂起。
+- faulted append 留下有效前缀并使整个 harness fault。
+
+### 其他测试套件
+
+- Telemetry 参考 adapter 和每个第三方 adapter 运行导出的一致性用例：同步准入、结果/rejection 身份、自动与显式 status、attribute 合并、事件顺序、settle 后行为、父子关系和不可读 payload 的压制。
+- Runtime telemetry 测试用 in-memory 参考断言精确符合 schema 的 span tree，以及每条 status path 上独立有效的 start/end/event bag。End attributes 保持可选。内容和 secret fixture 断言不存在，而不只是被 redact。
+- 现有 `agent-loop` 和 `agent` 测试套件原样通过——这就是第 14 节的兼容性标准。
+- 第 10 节的事件顺序，包括提交后的 `message_end`。
+- Hooks：registration-id `resumeData` round trip、重复 id 拒绝、聚合顺序、失败关闭的 `before_tool`、持久 summary 的 `fromHook` 来源，以及 harness 从不解释 hook 拥有的 summary details。
+- 台账完整性和 match 不变量：每个 provider 请求对每次物理请求留下恰好一条 `usage` record（split-turn 每次尝试两条；未上报 usage 的 pending deferred fetch 不写）；失败的压缩系列和被丢弃的 overflow 响应不丢失已记录成本；每个带 usage 的 entry 快照等于绑定到其 id 的最新非 adjustment record；重放 tool 记录两次执行；adjustment 从不修改 entry 并汇总到读取时有效成本；每次提交后 `getStats()` 的 token 与成本字段等于台账总和以及 `usage` 事件总值；fork 的 token 和成本字段从零开始，而 `messageCount` 包含所有复制的消息条目；v3 转换通过聚合导入 adjustment 保留总量。
+- 针对已报告 provider 形状的溢出分类：272,000 窗口中 prompt 268,009、84,500 中 81,217（可恢复）；非零 reasoning-only 输出；cache-write-heavy usage；拒绝 `max_output_tokens` 的 Codex 式 provider；真实用满 1,024 token cap（不可恢复）；以及每个会话式输入在一次恢复后停止的 `length → length`。
+- v3 fixture：链中和文件末尾的 labels 与 session info；旧的 `firstKeptEntryId` compactions；compaction 和 branch-summary entry 上保留的 `fromHook` 来源——全部作为一个规范化 idle `main` lane 打开。
+
+## 20. 实现状态与工作包
+
+工作只允许修改 `packages/agent`、`packages/session-backends/sqlite-node`、`packages/telemetry` 以及 `packages/ai` 中 telemetry request-option 面。其他 package source 是禁区。特别是本计划不迁移 `packages/coding-agent`；I0 已完成的依赖接线是唯一例外。Coding-agent v3 兼容只表示新的 JSONL repository 能读取受支持的 v3 session。
+
+### Claiming 与完成工作包
+
+1. 同步 `main`。只有当 checkbox 为空、所有依赖已勾选，并且没有活跃 reservation 拥有该包或重叠主文件时，包才可 claim。
+2. 立即在包条目上方添加 `**Reserved: <package-id> by @<username>.**`。单独提交该变更，message 为 `docs(agent): reserve <package-id>`。这个 commit 到达 `main` 后才算 claim 成功；如果另一个冲突 reservation 先合入，删除你的并另选。
+3. 从 reservation commit 开始。阅读引用的设计和主文件。
+4. 按以下循环工作：
+   1. 在主文件中实现该包描述的行为。未完成的公共操作继续保持 `HarnessNotImplemented` rejection。
+   2. 实现全面的聚焦测试，编码验收标准和该包拥有的每个设计不变量。Smoke test 和 happy-path 覆盖不足；每个自有不变量都要有可执行断言。
+   3. 反复迭代实现和测试直到行为完成且所有受影响测试通过。
+   4. 如果设计不成立，停下并在 Discord 咨询 Mario。达成一致后更新设计和包描述，再回到第 1 步。
+5. 运行 `npm run check`。实现 PR 或 commit 删除 reservation 并勾选包。放弃工作时删除 reservation，但不勾选。
+
+### Track F —— scaffold truth 与公共所有权
+
+- [x] **F0 —— 加固 scaffold。** 依赖：无。
+  - 主文件：`packages/agent/src/harness/agent-harness.ts`、`packages/agent/test/harness/agent-harness-scaffold.test.ts`。
+  - 清点每个公共方法。只保留在没有 operation runtime 时确实正确的行为，例如不可变的 harness 全局配置副本和直接叶子读取。让所有其他 placeholder 以 `HarnessNotImplemented` reject，而不是返回空 snapshot、idle state 或 no-op drive/wait 成功。
+  - R3 之前，`AgentHarness.create()` 只能打开没有 record 的 session。它拒绝包含 records 的 session，而不是报告假的空 suspended list。
+  - 验收：table-driven scaffold test 覆盖每个公共方法，证明没有未完成方法报告貌似成功。
+
+### 公共方法所有权
+
+这张表是穷举的。在拥有所列语义和测试之前，任何包都不能移除方法的 `HarnessNotImplemented`。
+
+| 公共表面 | 所属包 |
+|---|---|
+| scaffold-safe `name`、`getLeafId`、record-free create、runtime settings | F0 |
+| `AgentHarness.create()` restore 和 `suspended` inventory | R3 |
+| `lane`、`createLane`、`lanes`、lane facades、lane 绑定 session 读 | H0 |
+| resources、stream/retry/compaction settings、queue modes | F0 |
+| tool registry 加持久 active-tool selection | H4 |
+| `prompt`、`skill`、`promptFromTemplate` | H1 |
+| run `resume`、retries、terminal failure | H2 |
+| `steer`、`followUp`、`nextRun`、`cancelQueued` | H3 |
+| 持久 model/thinking/active-tools、lane-view 写入、`recordUsage` | H4 |
+| `abort`、`waitForIdle`、`runWhenIdle`、close settlement | H5 |
+| live tools 和 tool events | H6 |
+| 通过 `resume` 的 tool recovery | H7 |
+| deferred-handle `resume` 和取消 | H8 |
+| `compact` 与 compaction resume | C1–C3 |
+| `navigateTree` 与 navigation resume | N1 |
+| `peekAction`、`executeAction`、`runToCompletion` primitives/integration | I5/H0 |
+| hooks/events 注册 primitives 与 harness wiring | I1/I2/H0 |
+| `watch`、`watchSession`、完整 snapshot | O1 |
+
+### Track QA —— legacy test salvage
+
+实现包从这个设计推导测试，不使用 promotion test matrix。只有 QA track 拥有 `packages/agent/docs/harness-v2-test-matrix.md`。旧测试是证据而非规范：只有当一个 case 仍表达目标设计不变量且现有全面覆盖尚不存在时，QA 才移植它。
+
+- [x] **QA1 —— 清点被移除测试。** 依赖：无。
+  - 清点 harness promotion 移除的测试，记录每个 case 属于 covered、inapplicable 还是 blocked on 新实现包。
+  - 验收：matrix 中记录每个被移除 case 的处置；不改生产或测试代码。
+
+- [x] **QA2 —— 抢救存储与查询测试。** 依赖：QA1、R0。
+  - 移植值得保留且有替代 API 的有界查询、损坏处理、fork、不可变读取、lane、record-query 和 recovery-query 用例。跳过已删除的实现细节和 backend conformance 已覆盖行为。
+  - 验收：每个审查过的存储/查询用例要么有当前测试引用覆盖，要么移植成全面不变量测试，要么标记为 inapplicable，要么保持 blocked on J1–J6。
+
+- [ ] **QA3 —— 抢救剩余 legacy tests。** 依赖：QA2、J6、O2。
+  - 新存储和 harness runtime 完成后，审查 matrix 中所有仍 blocked 或 uncovered 的 case。只针对新公共 API 移植仍然有效的不变量；不要恢复已删除 API 或旧实现细节。QA3 可以改聚焦测试和 matrix，但不改生产代码。
+  - 验收：每行 matrix 最终都有当前测试引用覆盖、全面新测试移植或显式 inapplicable；不允许仍有 blocked 或 uncovered 行。
+
+### Track R —— recovery query、reducer 与 restore
+
+这些包按 R0 → R1 → R2 → R3 合入。R1 和 R2 增加 reducer module，而不是继续膨胀 `agent-harness.ts`。R3 是本 track 第一个拥有 `agent-harness.ts` 的包，因此在 F0 后执行。
+
+- [x] **R0 —— recovery-query contract。** 依赖：无。
+  - 主文件：`packages/agent/src/harness/session/types.ts`、`session.ts`、`memory.ts`、SQLite record storage/repository 文件、backend conformance 和聚焦 recovery-query 测试。
+  - 完全按第 7、12、13 节规范添加 `RecordQuery.operationKind` 和 `findOpenOperations(lane, { limit })`。Memory 维护投影，JSONL 在回放时推导，SQLite 从 lane open-operation projection 回答。
+  - 证明零/一个未完成操作可区分；普通写不能在忙 Lane 上启动第二个操作；最近 run 类型的 start 是索引查询。添加 lane open-operation projection。
+  - 验收：memory 和 SQLite 查询行为一致，非法查询组合 reject，restore 算法不需要完整历史扫描。
+
+- [x] **R1 —— 纯 record-log validity。** 依赖：R0。
+  - 主文件：`packages/agent/src/harness/reducer.ts`、`packages/agent/test/harness/reducer.test.ts`。
+  - 根据发现的未完成 start、有界 records 和点查 entries 校验第 5 节损坏规则；没有写入或副作用。
+  - 验收：每条有效性规则有一个聚焦 rejection test，并在第 6 节每个崩溃点都有有效前缀测试。
+
+- [x] **R2 —— 纯 lane-state reduction。** 依赖：R1。
+  - 主文件：`packages/agent/src/harness/reducer.ts`、`packages/agent/test/harness/reducer.test.ts`。
+  - 实现第 15 节 `LaneReductionInput` → `LaneReductionResult` 契约。把 pending queues/writes、attempts、tool batches、deferred handles、structural targets 和 idle next-run state 推导进 `laneState`；从同一组第 7 节查询输入推导 effective configuration 和 terminal-failure provenance。
+  - 保持 `LaneState` 只包含编排状态。Reduction 独占三个输出；后续恢复包消费 `LaneReductionResult`，不重新归约 tool 或 operation records。
+  - 验收：table-driven tests 覆盖 idle 和每个挂起状态、configuration fallback/override、terminal-failure provenance；归约确定且无写入。
+
+- [ ] **R3 —— harness restore inventory。** 依赖：F0、R2。
+  - 主文件：`packages/agent/src/harness/agent-harness.ts`、reducer integration helpers、restore tests。
+  - 让 `AgentHarness.create()` 使用索引式未完成操作发现、有界 idle/open 扫描、显式 provisioned-id 点查和有界配置查找。返回准确的 `SuspendedOperation[]` 且不启动 effect。
+  - 验收：idle 和多 Lane restore 不写入；多个未完成操作作为损坏拒绝；suspended metadata 完整；一个 Lane 绝不扫描另一个 Lane 的数据。`resume()` 仍可以因未实现而 reject。
+
+### Track J —— JSONL storage
+
+**进行中且已保留：@davidbrai。** 这项工作在本计划拆成 J0–J6 之前已经开始。合入前，track owner 必须包含或 rebase 到 R0 的 recovery-query contract，并报告哪些 J 包已完成。这个所有权 marker 存在时，其他 agent 不能挑选 J 包。
+
+这些包拥有 `packages/agent/src/harness/session/jsonl/**`、具体 `JsonlSessionRepo` export 和 `packages/agent/test/harness/session/jsonl*.test.ts`。它们按 J0 → J1 → J2 → J3 → J4 → J5 → J6 合入；R0 之后可与 Track L 和 I 并行。
+
+- [x] **J0 —— JSONL metadata 与 codec contracts。** 依赖：R0。
+  - 主文件：JSONL type/codec modules 和聚焦 codec tests；尚无公共 repository export。
+  - 实现第 13 节的 `JsonlSessionMetadata`、create/list options、format-4 header、line 判别式、`modifiedAt`、metadata 以及 parent-id/legacy-parent-path 规则。
+  - 验收：type 和 codec round trip 覆盖每个 header 字段和 line kind；还没有文件系统生命周期。
+- [x] **J1 —— format-4 单 session storage。** 依赖：J0。
+  - 实现单 session 的回放/写入支持：entries、records、lanes、facts、statistics、branch queries、operation-kind queries 和 open-operation projection。
+  - 保持内部；不导出部分实现的 repository。
+  - 验收：聚焦 round-trip tests 覆盖每种 mutation、共享 `seq`、query bounds、不可变读取和 JSON validation。
+- [x] **J2 —— format-4 repository lifecycle 与 forks。** 依赖：J1。
+  - 添加 create/open/list/delete、每 session 一个 writer queue、metadata ordering/filtering、branch/tree forks 和具体公共 `JsonlSessionRepo` export。
+  - 验收：完整的 backend-neutral conformance suite 对 JSONL 通过，包括并发 lane 写和 fork。
+- [x] **J3 —— format-4 crash 与 corruption 行为。** 依赖：J2。
+  - 添加撕裂尾部截断、内部畸形拒绝、缺失引用拒绝以及生命周期/并发边界 case。
+  - 验收：已确认写入在 reopen 后存活；非尾部的畸形数据绝不被静默修复。
+- [ ] **J4 —— 只读 v3 normalization。** 依赖：J3。
+  - 把受支持的 coding-agent v3 文件解码为规范化 v4 logical tree：custom messages、labels、session info、discarded-entry reparenting、old compactions、summary `fromHook` 来源、时间戳、parent mapping，以及在最后一个保留逻辑 entry 处的 idle `main`。
+  - 只读打开不得修改物理文件。不改 coding-agent source 或测试。
+  - 验收：fixture tests 覆盖第 12 节每条 normalization 规则，包括 `fromHook` true/false、缺失 v3 值规范为 false，以及畸形 v3 输入。
+- [ ] **J5 —— 首次写入 v3 conversion。** 依赖：J4。
+  - 第一次 mutation 时通过临时 format-4 文件重写；保留 metadata/facts/tree 以及已解析或 legacy parent 关系；添加聚合的 v3 usage adjustment。
+  - 验收：crash-safe conversion tests 覆盖 rename 前失败、成功 reopen、statistics preservation、未解析 legacy parent paths，以及不会二次转换。
+
+- [ ] **J6 —— 基于 schema 的持久 payload validation。** 依赖：J5。
+  - 定义共享 TypeBox schemas 用于 format-4 JSON，并从中派生 session types，包括应用自定义 `AgentMessage` 变体的 runtime schema registration。
+  - 验收：畸形持久 payload 一致被拒绝；JSONL decoding 使用共享 schemas。
+
+### Track I —— primitives
+
+I0、I1 和 I2 可独立推进。I3 → I4 → I5 是串行的，并在 R2 固定 `LaneState` 形状后开始。这些包使用独立模块和聚焦 unit tests；I5 保持 primitive-only，不编辑 `agent-harness.ts`。
+
+- [x] **I0 —— telemetry contracts、类型化 schemas 和 no-op context。** 依赖：无。
+  - 主文件：`packages/telemetry/src/index.ts`、`packages/telemetry/src/memory.ts`、`packages/telemetry/src/testing/` 及聚焦测试；pi-ai request-option 类型/传播及聚焦测试；`packages/agent/src/harness/telemetry.ts`、`packages/agent/src/index.ts`、聚焦测试、package scripts、`packages/agent/scripts/generate-telemetry-docs.ts` 和生成的 `packages/agent/docs/telemetry-schema.md`。不编辑 `agent-harness.ts`；它的 canonical context type 已合入，H0 在收敛后负责 option 重命名/默认值/存储和执行传递。
+  - 在 telemetry 中实现唯一的 canonical 第 18 节 callback-based `TelemetryContext` / `TelemetrySpan` contract、共享 no-op context、确定性 in-memory reference adapter、运行器无关 adapter conformance cases、可序列化 `defineTelemetrySchema()` 机制，以及带 child-bound starters 的 `createTypedSpanStarter(context, schemas)` 组合。
+  - 在 pi-ai 中给 `ProviderRequestOptions` 添加可选 `telemetryContext`，让所有 stream、deferred 和 image options 继承它；provider、`Models`、`ImagesModels`、直接分发和 simple-option 转换都保留它。Pi-ai 不拥有领域 schema 或 helper。
+  - 在 agent 中定义完整的规范性 `AI_TELEMETRY_SCHEMA` 和 `HARNESS_TELEMETRY_SCHEMA`、推断类型、readonly `AGENT_TELEMETRY_SCHEMAS` 组合 tuple 以及类型化 `startAiSpan()` / `startHarnessSpan()` helper。导出两个 schema、tuple 和 helper，并从 agent 包根目录再导出通用 telemetry 面。不复制通用契约，也不采用 OTel 或外部语义约定。
+  - 用指定的 agent package scripts 从 runtime schema values 生成只供仓库使用的合并 Markdown 参考。生产 helper 不做 runtime schema validation；schemas 编译期检查每个 pi 写入的 start/end/event 调用，并保持可作为机器可读数据导入。
+  - 在 workspace、local-release、publish、profiling 和 coding-agent binary build order 中把 telemetry 放到 pi-ai 前；添加 source-test aliases 并刷新 workspace/generated dependency locks。
+  - 已落地覆盖：聚焦测试覆盖 no-op 同步准入、返回值与同步/异步 rejection 保存、显式 no-op 子传播、一个共享冻结惰性 span 且不检查 payload、精确 start/optional-end 推断、多 schema 词表组合、child-starter 父传播、重复 span 名称和缺失/未知/空 schema/非法闭集 attributes 的拒绝、不存在声明 span events、schema JSON serialization、in-memory reference 对照所有导出 adapter conformance cases、option 在 provider/`Models` stream 与 deferred dispatch 中传播、直接与 `ImagesModels` image dispatch、内置 simple-option 转换以及生成文档新鲜度。O2 将用 reference adapter 测试 pi runtime status/nesting 行为并捕获 span。
+- [ ] **I1 —— hook registry 与 runner。** 依赖：无。
+  - 主文件：`packages/agent/src/harness/hooks.ts`、`packages/agent/test/harness/hooks.test.ts`。
+  - 实现类型化注册、稳定 id 校验、有序聚合、错误隔离、失败关闭的 `before_tool` 和 per-id resume data 处理。
+  - 验收：聚焦测试覆盖第 11 节每条聚合和失败规则；还没有 operation wiring。
+
+**Reserved: I2 by @vegarsti.**
+
+- [ ] **I2 —— passive events 与 watch buffering。** 依赖：无。
+  - 主文件：`packages/agent/src/harness/events.ts`、`packages/agent/test/harness/events.test.ts`。
+  - 实现被动 listener isolation，以及 lane 和 session watcher 使用的 snapshot/start/unsubscribe buffer primitive。
+  - 验收：snapshot/event 无间隙、有序一次性 flush、watcher 相互独立、`handler_error` 递归安全；没有 operation wiring。
+- [ ] **I3 —— lane mutation line。** 依赖：R2。
+  - 主文件：`packages/agent/src/harness/lane-runtime.ts`、聚焦 mutation-line tests。
+  - 实现 per-lane FIFO 和状态更新纪律，并为第 15 节每个条件历史提供 test-only jobs。
+  - 验收：job 绝不交错；rejected job 不毒化队列；job 内部没有外部 effect。
+- [ ] **I4 —— automatic `Effects` implementation。** 依赖：I0、I1、I3、L3。
+  - 主文件：`packages/agent/src/harness/effects.ts`、聚焦 effects tests。
+  - 在完整 `Effects` interface 后实现持久写、条件提交、provider/tool/hook adapters、sleep、fault propagation 和 live-state 更新。
+  - 验收：每个外部 effect 和持久写都经过 `Effects`；失败的写使整个 harness fault。
+- [ ] **I5 —— manual gate primitive。** 依赖：I4。
+  - 主文件：`packages/agent/src/harness/gated-effects.ts`、聚焦 gate tests。
+  - 实现 `GatedEffects` action 描述、stable peek、恰好一次释放、可重入嵌套 action、run-through 和停住 rejection；暂不接公共 lane controls。
+  - 验收：停住时零 effect；嵌套 hook action 能暴露而不死锁其被释放父级；primitive 边界的 durable-prefix close simulation 通过。
+
+### Track L —— agent-loop building blocks
+
+这些包都拥有 `packages/agent/src/agent-loop.ts`，因此严格按 L1 → L2 → L3 合入。每个包之后现有 `agent-loop` 和 `agent` tests 都原样通过。
+
+**Reserved: L1 by @cristinaponcela.** 这个所有权 marker 存在时，其他 agent 不能挑 L1。
+
+- [ ] **L1 —— 抽取 assistant streaming。** 依赖：I0。
+  - 添加 `streamAssistant()` 和 `StreamAssistantConfig`，包括显式 telemetry context；让兼容 loop 的请求路径经过它，但不改事件或结果。
+  - 验收：聚焦 stream tests 覆盖 settled-result 收窄（最终值为 `pending` 是缺陷），现有 loop tests 不变。
+- [ ] **L2 —— 抽取 tool-call phases。** 依赖：L1。
+  - 添加 `prepareToolCall()`、`executeToolCall()`、`finalizeToolCall()`、result helpers、replay declaration、显式 telemetry contexts 和 durability callbacks，不改批次行为。
+  - 验收：phase tests 覆盖校验、阻止、abort、callback failure、updates 和 patches。
+- [ ] **L3 —— 组合 tool batches 和兼容 wrappers。** 依赖：L2。
+  - 添加具备顺序/并行源序、截断、abort 和 `terminate` 规则的 `executeToolBatch()`；让每个 legacy loop export 成为使用 no-op context 的薄组合。
+  - 验收：source-order 和 parallelism tests 通过，`agent-loop` 与 `agent` suites 不变。
+
+### Track H —— harness integration 与 run execution
+
+H0 把 restore 和 primitives 收敛进 `agent-harness.ts`。H0–H8 随后严格按序合入。每个包直接添加 Tier A recovery cases、Tier B exact trace、相关 events/hooks 和 Tier C interleavings，而不是把测试推迟到最后。
+
+- [ ] **H0 —— lane facades 与 primitive integration。** 依赖：R3、I2、I5。
+  - 接线持久 lane lookup/creation/inventory、等价的名称绑定 facades、canonical hook/event/telemetry 类型；把 `AgentHarnessOptions.context` 重命名为 `telemetryContext` 并设置 no-op 默认值、存储 root context；接公共 manual-drive controls 和 ownership/close plumbing。
+  - 验收：重复 facades 等价；lanes 保持隔离；公共 drive controls 匹配 gate actions；没有任何 placeholder 操作被意外启用。
+- [ ] **H1 —— 一次成功的无 tool run。** 依赖：H0、L3、I1。
+  - 实现 `prompt`、skill/template expansion、run acceptance、捕获已经 pending 的 next-run items、initial appends、一次 assistant step、usage record、message commit、conditional finish、result 以及基本 run/turn/message events/hooks。
+  - H3 稍后拥有公共 next-run enqueue/cancel/race 行为；H1 拥有捕获进 `operation_started.initialMessages`。
+  - 验收：automatic/manual 持久日志一致；在每个 released action 后关闭都能恢复预期的 suspended prefix。
+- [ ] **H2 —— retry、run resume 和 terminal failure。** 依赖：H1。
+  - 添加持久 attempt counts、retry policy/backoff/events、unfinished-assistant resume、give-up error entries、terminal-failure drain 和这些状态的不动点检查。
+  - 验收：retry caps 跨 reopen 保留；失败尝试记录 usage 但没有 message；半完成恢复幂等。
+- [ ] **H3 —— queues 和 checkpoints。** 依赖：H2。
+  - 添加 next-run/steer/follow-up acceptance 和 modes、取消、checkpoint 消费、queue events 和 finish-boundary conditionals。只消费 R2 产生的 queue state。
+  - 验收：竞态行 2、5、7、12 的两种顺序；provider context 只在尾部增长。
+- [ ] **H4 —— deferred writes、持久 configuration 和 adjustments。** 依赖：H3。
+  - 添加 deferred lane-view tree/configuration writes、direct idle writes、model/thinking/active-tool persistence 与 lookup、`recordUsage`、pending-write snapshots/events 和 finish conditionals。
+  - 验收：竞态行 3、9 的两种顺序；接受写入跨崩溃和 abort markers 保留；adjustments 影响台账总值但从不修改 entry。
+- [ ] **H5 —— abort、wait、run-when-idle 和 close。** 依赖：H4。
+  - 添加持久 abort acceptance、队列清空、pending-write application、synthetic closure messages/results、suspended abort、idle waiters/callbacks 和进程内 close settlement。
+  - 验收：竞态行 4、6、8、10 的两种顺序；每个 abort action 后 crash/reopen。
+- [ ] **H6 —— live durable tool batches。** 依赖：H5。
+  - 让第 14 节 tool callbacks 经过 `Effects`；执行前写 `tool_started`，持久 final results 和 `terminate`，上报 usage，发出 tool events。
+  - 验收：精确的单 tool 和 parallel-batch traces；blocked/invalid tool 不写 intent；source-order finalization 稳定。
+- [ ] **H7 —— tool recovery。** 依赖：H6。
+  - 消费并 reconcile R2 的 X1–X5 reduced state；只在持久声明和当前声明都安全时重放；保留序号；处理截断批次且不执行。不复制 reducer 逻辑。
+  - 验收：完整 tool crash matrix、changed replay declarations、parallel-prefix crashes 和幂等的第二次恢复。
+- [ ] **H8 —— deferred provider redemption。** 依赖：H7。
+  - 集成已落地的 pi-ai deferred APIs：suspend、pending re-park、ready continuation、terminal/rejected fetch failure、handle mismatch 和尽力而为取消。
+  - 选择并文档化 `resume()` 是使用非零 `fetchDeferred` wait 还是立即检查一次并重新停住。
+  - 验收：每次 resume 一次 fetch；pending 除已上报 usage 外不写任何东西；terminal errors 从不发起替代请求。
+
+### Track C/N —— 结构性操作
+
+这些包也拥有 `agent-harness.ts`，并在 H8 后按 C1 → C2 → C3 → N1 合入。
+
+- [ ] **C1 —— 手动压缩操作。** 依赖：H8。
+  - 添加 acceptance、hook decision、持久 summary attempts/usage、完整 `retainedTail`、result entry、abort/failure 和 structural resume。
+  - 验收：精确 manual-compaction traces 和每个崩溃边界；hook 提供的 summary 遵守同一持久 entry contract 并持久化 `fromHook: true`。
+- [ ] **C2 —— threshold auto-compaction。** 依赖：C1、H4。
+  - 在活跃 run 的 checkpoint 内执行压缩，没有嵌套操作，并继续 assistant loop。
+  - 验收：append-only context 除 compression boundary 外保持；重复压缩保留上一个 checkpoint tail。
+- [ ] **C3 —— overflow recovery。** 依赖：C2、H2。
+  - 分类可恢复 overflow/length results；在 usage 记账后丢弃它们；压缩；每个会话式输入重试一次并有界失败。
+  - 验收：第 6 节和第 20 节的每个 provider 形状与 crash row，包括 hook decline 和 `length → length`。
+- [ ] **N1 —— move-first navigation。** 依赖：C3。
+  - 添加 acceptance、abandoned-branch preparation、hook/generated summary、move commit、移动后 summary/fact writes、abort/failure 和 structural resume。
+  - 验收：每个导航 crash row，包括移动后崩溃后的重新生成以及 target/source validation；hook summary 持久化 `fromHook: true`。
+
+### Track O —— observability 与核心完成
+
+这些包在 N1 后按 O1 → O2 → O3 → O4 合入，O2 与 O3 之间有 QA3。QA3 还要求 J6。它们不得修改 `packages/coding-agent/**`。
+
+- [ ] **O1 —— snapshots 与 event completeness。** 依赖：N1、I2。
+  - 完成 live lane/session snapshots、event filtering、streaming/running-tool state 以及第 10 节所有事件插入点。
+  - 验收：event nesting/order tests 和 attach-mid-operation snapshot tests 无订阅间隙。
+- [ ] **O2 —— runtime telemetry instrumentation。** 依赖：O1、I0。
+  - 在 procedure scopes 插入 operation/checkpoint/turn/step wrappers；用 `startHarnessSpan()` 在所属边界插入 effect 和 passive-handler span；用 `startAiSpan()` 插入逻辑模型请求 span。只填充 schema 声明的 attributes，包括并行 tool 子 span 和 resumed operation correlation；预期 in-band failures 显式设置错误 status。
+  - 验收：捕获 telemetry 对 success、failure、suspend/resume、retry、compaction 和 parallel tools 具有精确符合 schema 的 span trees；每个 start/end/event bag 独立有效；callback spans 恰好 settle 一次；默认值中无未声明名称、内容或 secret。
+- [ ] **O3 —— action-prefix 与 race audit。** 依赖：O2、QA3。
+  - 对每行竞态完成 Tier C；机械重新打开每个 action prefix；比较 automatic/manual logs；验证 reducer/live-state 不动点。
+  - 验收：每行竞态有两种顺序；没有缺少 reopen test 的已记录 crash action。
+- [ ] **O4 —— backend parity 与最终 core audit。** 依赖：J6、O3。
+  - 跑完整的 storage/recovery matrix（memory、JSONL、SQLite）；删除死 agent/storage declarations 和兼容 comments；验证 exports/declarations 与 `./node`；更新 changelogs 和 core docs。
+  - 验收：所有 non-e2e tests 和 `npm run check` 通过；没有仍 scaffolded 的活跃 harness operation；`packages/coding-agent/**` 未变；worktree clean。
+
+### 依赖、优先级与合并总结
+
+串行存储线是 **R0 → J0 → J1 → J2 → J3 → J4 → J5 → J6**。归约线是 **R0 → R1 → R2 → R3**。循环线是 **I0 → L1 → L2 → L3**。Effects 线是 **R2 → I3 → I4 → I5**，其中 I4 还要求 I0、I1 和 L3。H0 前的收敛门是 **F0 + R3 + I2 + I5**。
+
+Runtime 合并线严格为 **H0 → H1 → H2 → H3 → H4 → H5 → H6 → H7 → H8 → C1 → C2 → C3 → N1 → O1 → O2 → QA3 → O3 → O4**。J6 可以在 QA3 前任意时刻独立合入。这个顺序避免并发重写 `agent-harness.ts`，给每个公共方法分配 owner，并确保每个实时路径都在其 reducer、telemetry、interception 和 effect boundaries 存在后落地。
+
+## 21. 必读材料
+
+新的实现 session 按以下顺序阅读。本文档优先于旧的 harness 设计。
+
+1. `packages/agent/docs/harness-v2.md` —— 本文档。
+2. `packages/agent/src/harness/session/types.ts` —— v4 entries、records、storage 和 repository contracts。
+3. `packages/agent/src/harness/session/session.ts` —— session validation 和 lane-bound views。
+4. `packages/agent/src/harness/session/memory.ts` —— reference backend。
+5. `packages/session-backends/sqlite-node/src/sqlite/repo.ts` —— v4 SQLite repository、leases 和 forks。
+6. `packages/session-backends/sqlite-node/src/sqlite/storage/branch-entries.ts` —— branch cache queries。
+7. `packages/agent/src/harness/agent-harness.ts` —— 公共 harness API 和 runtime。
+8. `packages/telemetry/src/index.ts` —— canonical telemetry contract、schema machinery、typed starter 和公共导出。
+9. `packages/telemetry/src/noop.ts`、`memory.ts` 和 `testing/` —— no-op/reference contexts 和可复用 conformance cases。
+10. `packages/agent/src/harness/telemetry.ts` —— AI-request 和 harness schemas、组合 schema tuple 及类型化 helper。
+11. `packages/agent/src/agent-loop.ts` —— agent-loop 实现和第 14 节 building blocks。
+12. `packages/agent/src/agent.ts` —— queues、continuation、abort、settlement；用于保留精神理解。
+13. `packages/agent/src/harness/messages.ts` —— message conversion（默认 `toProviderMessages`）。
+14. `packages/agent/src/harness/compaction/compaction.ts` —— preparation 和 split-turn summaries。
+15. `packages/ai/src/utils/transform-messages.ts` —— orphaned-tool-call healing。
+16. `packages/coding-agent/src/core/agent-session.ts` —— 只读行为参考；不要修改它。
+17. `packages/coding-agent/src/core/extensions/runner.ts` —— 只读错误隔离参考；不要修改它。
+18. `packages/coding-agent/docs/session-format.md` —— 只读 v3 JSONL format 参考。

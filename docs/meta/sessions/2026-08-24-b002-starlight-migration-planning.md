@@ -100,6 +100,26 @@
 
 B-002 Phase 1 / Phase 2 / Phase 3 全部完成。
 
+## Pi Design 延伸阅读（2026-08-26 追加）
+
+**目标**：在 `tutorial/zh-CN/10-extended/pi-design/` 增加 Pi Harness 设计延伸阅读，包含 harness v1/v2 完整翻译、两篇教程式解析和版本差异分析。
+
+**完成状态（5/5 篇）**：
+
+| 文章 | 状态 | 说明 |
+| --- | --- | --- |
+| `harness-v1-translation.md` | ✅ 完成 | 2810 行，完整翻译不删减。 |
+| `harness-v2-translation.md` | ✅ 完成 | 第 1–12 节先提交；第 13–21 节补齐 Storage、Agent-loop、Harness internals、pi-ai deferred、Fork/subagent、Telemetry、Testing 和 Work packages。 |
+| `harness-v1-analysis.md` | ✅ 完成 | 641 行，教程式解析。 |
+| `harness-v2-analysis.md` | ✅ 完成 | 512 行，教程式解析。 |
+| `harness-v1-v2-diff.md` | ✅ 完成 | 427 行，版本差异点。 |
+
+**验证**：`cd site-starlight && ASTRO_TELEMETRY_DISABLED=1 npm run build` 通过，55 页构建成功；`npm run check:links` 通过，55 个 Markdown 文件链接正常。
+
+**部署检查**：待本次推送后确认 GitHub Actions 与线上页面。
+
+## 正文排版改造进度（2026-08-25 暂停记录）
+
 ## 排版修复（追加）
 
 **问题**：页面标题和 H2 字号过大（H2 约 29px），内容区偏窄（48rem），对中文阅读体验不佳。
@@ -162,22 +182,4 @@ B-002 Phase 1 / Phase 2 / Phase 3 全部完成。
 **暂停原因**：维护者有新工作需要处理。
 
 **恢复时的第一步**：从 `03-frameworks/deepseek-harness/overview.md` 开始改造 P2 框架拆解 9 篇。
-
-## Sidebar 修复（追加）
-
-**问题**：初始部署后侧边栏"中文教程"分组下为空，无任何章节链接。
-
-**根因**：
-1. `autogenerate: { directory: "tutorial/zh-CN" }` 路径错误——Starlight 的 autogenerate 是相对 content collection 根目录，不是相对文件系统。使用 root locale 时应直接用目录名。
-2. glob loader 从外部 `../../tutorial/` 加载内容时，Starlight 内部的 `getRoutePathRelativeToCollectionRoot()` 假设内容在 `src/content/docs/` 下，导致路径匹配失败。
-3. symlink `src/content/docs -> ../../tutorial/zh-CN` 未提交到 git，CI 上构建时找不到内容目录。
-
-**修复**：
-1. 创建 symlink：`src/content/docs -> ../../../tutorial/zh-CN`（相对路径指向仓库根的 `tutorial/zh-CN/`）。
-2. `content.config.ts` 改用标准路径：`glob({ pattern: "**/*.md", base: "./src/content/docs" })`。
-3. sidebar 改为按顶层子目录显式配置 autogenerate 分组（概览、核心概念、Harness 机制等），每个分组内自动展开该目录下的文件和子目录。
-4. 提交 symlink 到 git 使 CI 构建可用。
-5. 更新根路径 redirect 为 `/awesome-agent-harness-tutorial/00-overview/`（无 locale 前缀）。
-
-B-002 Phase 1 / Phase 2 / Phase 3 全部完成。
 B-002 Phase 1 / Phase 2 / Phase 3 全部完成。
