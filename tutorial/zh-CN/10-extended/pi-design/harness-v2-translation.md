@@ -1316,3 +1316,112 @@ interface Hooks {
 | `after_tool` | 每个已执行结果 | — | 只在安全重放时 |
 | `before_compaction`、`before_navigation` | 每操作 | 否 | 结果条目或任何 `step_attempt` 存在时不运行 |
 | `before_run_end` | 每正常完成边界 | — | 恢复到达的边界（可能重复）；中止、终端失败或自动压缩耗尽从不 |
+
+## 12. Session 与 SessionTree
+
+### 条目
+
+树内容。不存在其他条目类型；指针和全局事实不是条目（第 2 节）。
+
+```ts
+interface EntryBase {
+  type: string;
+  id: string;
+  seq: number;                 // 共享序列；读取侧，存储分配
+  parentId: string | null;     // 存储分配：追加 Lane 的叶子
+  timestamp: number;           // Unix 毫秒，存储分配
+}
+
+interface MessageEntry           extends EntryBase { type: "message"; message; terminate? }
+interface ModelChangeEntry       extends EntryBase { type: "model_change"; provider; modelId }
+interface ThinkingLevelEntry     extends EntryBase { type: "thinking_level_change"; thinkingLevel }
+interface ActiveToolsEntry       extends EntryBase { type: "active_tools_change"; activeToolNames }
+interface CompactionEntry        extends EntryBase { type: "compaction"; summary;
+                                                     retainedTail; tokensBefore; details?; usage?; fromHook }
+interface BranchSummaryEntry     extends EntryBase { type: "branch_summary"; fromId; summary;
+                                                     details?; usage?; fromHook }
+interface CustomEntry            extends EntryBase { type: "custom"; customType; data? }
+
+type Entry = MessageEntry | ModelChangeEntry | ThinkingLevelEntry | ActiveToolsEntry
+           | CompactionEntry | BranchSummaryEntry | CustomEntry;
+```
+
+Harness 写的助手 `MessageEntry` 始终包含 `SettledAssistantMessage`；`pending` 在任何持久写入之前被拒绝。v4 工具结果 `MessageEntry` 额外在 `message` 旁边以 `terminate?: true` 持久化终结的批次控制决策。这是归约的编排状态（第 7 节），从不是模型上下文；到 provider 消息的投影忽略它。
+
+对压缩和分支摘要条目，`fromHook: true` 意味着摘要由 `before_compaction` 或 `before_navigation` 提供；`false` 意味着 harness 生成。每个 v4 条目都必需此字段。这个持久来源也是 `details` 的所有权边界：harness 生成的摘要可以使用 harness 拥有的形状，而钩子提供的 details 是不透明的，harness 必须从不解释。
+
+每个 v4 压缩——生成或钩子提供——存储完整的 `retainedTail`；空尾部是 `[]`，从不是缺失。压缩条目是自包含的检查点：上下文构建从不越过它读取。条目 `usage` 字段是产生该条目的响应的不可变显示快照。持久台账是 `usage` 记录；包括后续调整的有效成本是按 `entryId` 的读取时台账查询。
+
+v3 文件额外包含 `custom_message`、`label` 和 `session_info` 条目。加载在暴露 v4 树之前规范化它们：
+
+- `custom_message` 变成自定义 agent 消息
+- `label` 和 `session_info` 变成全局事实并从逻辑树消失
+- 被丢弃条目的保留子节点重新父级到最近的保留祖先
+- 旧压缩将 `firstKeptEntryId` 解析为 `retainedTail`
+- v3 ISO 时间戳转换为 Unix 毫秒
+
+### SessionTree
+
+面向树的契约。每个 Lane 暴露一个视图（`lane.session`）；`Session` 本身为 `main` 实现它。通过 Lane 视图的写入进入该 Lane 的变更线：运行打开时变成持久延迟写入；压缩或导航期间等待操作结束；空闲 Lane 上直接追加。
+
+```ts
+interface EntryQuery {
+  type?: Entry["type"];
+  customType?: string;
+  order?: "newestFirst" | "oldestFirst";   // 默认 newestFirst
+  limit?: number;
+  cursor?: EntryCursor;
+}
+
+interface BranchBounds {
+  start?: string;              // 默认：视图的 Lane 叶子
+  stopAtType?: Entry["type"];  // 扫描在第一个匹配后结束，包含
+  stopAtId?: string;
+}
+
+interface SessionTree {
+  getLeafId(): Promise<string | null>;
+  getEntry(id: string): Promise<Entry | undefined>;
+  getStats(): Promise<SessionStats>;
+
+  getName(): Promise<string | undefined>;
+  setName(name: string): Promise<void>;
+  getLabel(targetId: string): Promise<string | undefined>;
+  setLabel(targetId: string, label: string | undefined): Promise<void>;
+
+  findEntries(query?: EntryQuery): Promise<Entry[]>;
+  findEntry(query?: EntryQuery): Promise<Entry | undefined>;
+
+  findEntriesOnBranch(query?: EntryQuery & BranchBounds): Promise<Entry[]>;
+  findEntryOnBranch(query?: EntryQuery & BranchBounds): Promise<Entry | undefined>;
+
+  appendMessage(message: AgentMessage): Promise<string>;
+  appendCustomEntry(customType: string, data?: unknown): Promise<string>;
+}
+```
+
+查询语义：分支扫描取从 `start` 到根的路径，按 `order` 方向遍历，在 `stopAt` 匹配后停止（包含），过滤，然后应用 `limit` 和 `cursor`。
+
+- `newestFirst` 加 `stopAtType: "compaction"` 在最新压缩处结束：上下文窗口。
+- 扩展模式：有效状态 = `findEntryOnBranch({ type: "custom", customType })`；集合 = `findEntriesOnBranch(...)`；全局清单 = `findEntries(...)`。
+- 上下文构建是带 `stopAtType: "compaction"` 的分支扫描。
+- `SessionTree` 没有导航；移动 Lane 是 Lane 上的 `navigateTree()`。
+
+读取一致性：查找器和 `getEntry` 只返回已提交的条目。延迟写入在应用之前不在树中。待处理写入在快照中可见，通过 provisioned id 关联。
+
+### Session
+
+`Session` 添加 Lane 表面和记录日志。它可以独立使用——不需要 harness。生产中 harness 写记录；恢复 fixture 和 Tier A 测试通过同一 API 预填充。Lane、条目和事实是 Session 级的。
+
+```ts
+class Session implements SessionTree {          // 绑定到 "main"
+  constructor(storage: SessionStorage, options?: { idGenerator?: IdGenerator });
+  readonly idGenerator: IdGenerator;
+
+  view(lane: string): SessionTree;
+  // ... SessionTree 方法 ...
+  // ... Lane 方法（prompt, steer, abort, resume 等）...
+  // ... 记录方法（appendRecord, findRecords, findOpenOperations, getLog）...
+  // ... Lane 管理（createLane, moveLane, getLanes）...
+}
+```
