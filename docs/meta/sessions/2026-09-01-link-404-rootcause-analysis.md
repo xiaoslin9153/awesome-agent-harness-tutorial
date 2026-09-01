@@ -1,7 +1,7 @@
 # 会话记录：教程链接 404 根因分析与修复
 
 - 日期：2026-09-01
-- 状态：已完成（分析 + 修复 B+C 已实现并本地验证；待推送部署验证线上）
+- 状态：已完成（分析 + 修复 B+C 已实现、本地验证、推送并部署成功，线上验证通过）
 - 范围：`tutorial/` 链接断链分析；`site-starlight/` 构建配置、插件；`scripts/check-links.mjs`
 
 ## 会话目标
@@ -54,12 +54,16 @@
 2. 采用自定义 rehype 插件而非 `remark-link-rewrite` 第三方包：可控、无新增依赖、slug 规则与 Astro 一致。
 3. 采用 `markdown.processor: unified()` 而非废弃的 `markdown.rehypePlugins`，消除 deprecation 警告。
 
-## 待办（推送后）
+## 部署与线上验证（已完成）
 
-- 推送后检查 GitHub Actions 部署成功。
-- 验证线上各页面与链接不再 404（重点：`/toc/`、`/09-glossary/glossary/` 及正文链接）。
+- 提交 `5d5d8e0` 推送到 `main`，GitHub Actions "Deploy Pages" 运行成功（conclusion=success）。
+- 线上验证（2026-09-01）：
+  - 全部 54 个页面 + 首页访问均 200（线上抽查）。
+  - `/toc/`、`/09-glossary/glossary/`、`/01-core-concepts/agent-run-lifecycle/` 均 200。
+  - 线上 `00-overview/` 页面内链接已为带 base 的目录式 URL，不再指向 `.md`。
+- git 状态：`## main...origin/main` 干净，本地与远端一致。
+- 说明：`sitemap-index.xml` 返回 404 为 Astro 默认不生成该文件，非本次断链问题。
 
 ## 下一步
 
-1. 提交改动（`docs` 类型，Conventional Commits）。
-2. 推送后执行部署检查并记录到进度追踪器。
+1. 后续每次推送部署后，继续观察链接检查在 CI 中的表现（check-links 阶段 2 已集成）。
