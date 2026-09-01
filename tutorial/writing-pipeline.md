@@ -46,7 +46,7 @@ Draft 允许粗糙，但事实声明必须标注 `已验证`、`推断` 或 `未
 
 ### Polish 阶段
 
-主 Agent 在 Polish 阶段负责语言和可读性，不新增事实。
+Polish 阶段只负责语言和可读性，不新增事实。
 
 #### 输入
 
@@ -128,7 +128,7 @@ Polish 通过还要求：
 
 ### Implementation Review 阶段
 
-主 Agent 在 Implementation Review 阶段负责事实和偏差，不负责文风。
+Implementation Review 阶段只负责事实和偏差，不负责文风。
 
 #### 输入
 
@@ -190,6 +190,8 @@ review:
     evidence_version: 本地快照 commit
     summary: 已核对理论模型与源码入口。
 ```
+
+`agent` 记录该阶段的实际执行者，不是预设角色。上例中的 `polish-agent` 和 `implementation-review-agent` 只是示意值；写成实际执行者名称，或同一执行者完成多个阶段时写成同一个值，都是合法的。这个字段用于追溯谁对哪一段结论负责，不构成任何执行方式上的约束。
 
 Draft 阶段可以先写：
 
@@ -284,7 +286,7 @@ flowchart TD
 
 ## 部署检查阶段
 
-每次提交推送后，由主 Agent 负责验证线上站点是否正确更新。
+每次提交推送后，执行者负责验证线上站点是否正确更新。
 
 ### 职责
 
@@ -298,7 +300,7 @@ flowchart TD
 
 ```yaml
 deploy_check:
-  agent: main-agent
+  agent: 执行者标识
   date: YYYY-MM-DD
   commit: git SHA
   workflow_status: success | failure | in_progress
@@ -318,25 +320,33 @@ deploy_check:
 - 页面内容包含本次变更的关键标记（标题、图表或文本片段）。
 - 如果失败，必须在会话记录中写明根因和修复动作，不允许静默忽略。
 
-## 单执行者模式
+## 执行方式与阶段边界
 
-Goal 模式只使用主 Agent 一个执行者。不得创建 Subagent 或并行子任务；Draft、Polish、Implementation Review、部署检查和进度同步都由主 Agent 按顺序完成。这样消除模型调用链差异，也让失败点可定位。
+流水线不预设执行者数量，也不限制并行度。可以由一个执行者串行走完三阶段，也可以把 Draft、Polish、Implementation Review 和部署检查分派给不同执行者并行推进；唯一前提是阶段边界不合并、每阶段的产出可追溯。
 
-每小节的执行流程：
+选择执行方式时按改动形态判断：
+
+| 情况 | 建议方式 |
+| --- | --- |
+| 单节改动，需要上下文连续 | 同一执行者串行完成三阶段 |
+| 多节并行起草，章节间无交叉依赖 | 分派执行者并行，各自保留阶段产出 |
+| 批量事实核对 | 按章节清单分派，核对结果回写同一份 `pending_review` 清单 |
+
+无论用哪种方式，每小节都要走完同一条链路：
 
 ```text
-作者（主 Agent）撰写 Draft
-→ 主 Agent 执行 Polish 阶段
-→ 主 Agent 做轻量自检：事实标记、源码锚点、链接、图和格式
-→ 主 Agent 提交并推送（最小改动）
-→ 推送后主 Agent 验证构建、推送和页面可达
-→ 主 Agent 更新进度表和会话记录
+撰写 Draft
+→ 执行 Polish 阶段
+→ 轻量自检：事实标记、源码锚点、链接、图和格式
+→ 提交并推送（最小改动）
+→ 推送后验证构建、推送和页面可达
+→ 更新进度表和会话记录
 → 进入下一小节
 ```
 
-在「批量草稿模式」下，Implementation Review 不逐节执行。每节必须保留 `review.implementation.verdict: pending`，并把待核对的源码锚点、命令或实验写入 `pending_review` 清单。全部章节完成初稿后，主 Agent 先按清单执行完整事实审查，再允许任何章节改成 `published`。这个模式只降低节奏，不降低发布门槛。
+在「批量草稿模式」下，Implementation Review 不逐节执行。每节必须保留 `review.implementation.verdict: pending`，并把待核对的源码锚点、命令或实验写入 `pending_review` 清单。全部章节完成初稿后，先按清单执行完整事实审查，再允许任何章节改成 `published`。这个模式只降低节奏，不降低发布门槛。
 
-阶段边界仍然分离：Polish 只处理语言清晰度、结构和术语；Implementation Review 只处理源码证据、版本和行为一致性；部署检查只验证构建成功、URL 可达和内容上线。
+阶段边界必须分离：Polish 只处理语言清晰度、结构和术语，不新增事实；Implementation Review 只处理源码证据、版本和行为一致性，不负责文风；部署检查只验证构建成功、URL 可达和内容上线。每个阶段由谁执行，记录在该章节 Front Matter 的对应 `agent` 字段中。
 
 ## 框架深拆标准
 
