@@ -65,6 +65,13 @@ status: 已完成
 
 注意：`AGENTS.md:48` 记录的链接检查命令是 `cd site && npm run check:links`，指向已废弃的 `site/`。本次按实际生效的 `site-starlight/` 执行。该处修正不在本次范围内，留作后续。
 
+### 步骤 5：收尾提交与部署检查
+
+- `043f21c` 收尾提交：`.gitignore` 忽略 `.workbuddy/`，会话记录置为已完成并补齐步骤 3/4、结果、开放问题。六笔提交（`7b001f9`…`043f21c`）在 429 打断前全部完成并推送。
+- 推送 `a5f0a90..043f21c` 到 `origin/main`，分支同步，工作树干净。
+- GitHub Actions Deploy Pages 运行 `33481434218` 成功（build、markdown links、deploy 全绿）。唯一注解是 Node.js 20 弃用提示，与本次改动无关。
+- 站点入口 `https://xiaoslin9153.github.io/awesome-agent-harness-tutorial/` 返回 HTTP 200。
+
 ## 结果
 
 A 类限制全部解除。仓库中已无禁止 Subagent 或并行执行的现行规则，无「Goal Agent」绑定，无 429/402 恢复流程。
