@@ -31,9 +31,9 @@
 
 ## 公开教材写作流水线
 
-`tutorial/` 下的每一章必须经过 Draft、Polish 和 Implementation Review 三个阶段。主 Agent 独立串行完成三个阶段：先写清内容，再润色语言，最后核对描述是否与真实实现、源码路径、命令行为或实验结果一致。
+`tutorial/` 下的每一章必须经过 Draft、Polish 和 Implementation Review 三个阶段：先写清内容，再润色语言，最后核对描述是否与真实实现、源码路径、命令行为或实验结果一致。三个阶段可以串行完成，也可以分派给不同执行者并行推进；顺序不能颠倒，阶段边界不能合并。
 
-三个阶段的检查清单、输入、输出和验收标准定义在 `tutorial/writing-pipeline.md`。公开章节必须在 Front Matter 中记录 Polish 和 Implementation Review 的结果。每次公开教材变更推送到 `main` 后，由主 Agent 执行线上部署检查；输出接口定义在 `tutorial/writing-pipeline.md`。
+三个阶段的检查清单、输入、输出、验收标准和执行方式定义在 `tutorial/writing-pipeline.md`。公开章节必须在 Front Matter 中记录 Polish 和 Implementation Review 的结果。每次公开教材变更推送到 `main` 后，都要执行线上部署检查；输出接口定义在 `tutorial/writing-pipeline.md`。
 
 ## 最小改动与提交纪律
 
@@ -58,7 +58,7 @@
 3. 确认站点入口、语言路由和受影响页面可访问。
 4. 如果部署失败，记录失败链接、关键日志、根因假设和下一个修复动作。
 
-当前站点流水线已上线（GitHub Pages + GitHub Actions），每次推送后由主 Agent 执行部署检查并在会话记录中记录结果。
+当前站点流水线已上线（GitHub Pages + GitHub Actions），每次推送后执行部署检查并在会话记录中记录结果。
 
 ## 文档规则
 
