@@ -1,11 +1,18 @@
 import { defineConfig } from "astro/config";
 import starlight from "@astrojs/starlight";
+import { unified } from "@astrojs/markdown-remark";
+import rehypeRewriteMdLinks from "./src/plugins/rehype-rewrite-md-links.mjs";
 
 const siteUrl = process.env.SITE_BASE_URL || "/awesome-agent-harness-tutorial/";
 
 export default defineConfig({
   site: "https://xiaoslin9153.github.io",
   base: "/awesome-agent-harness-tutorial",
+  markdown: {
+    processor: unified({
+      rehypePlugins: [rehypeRewriteMdLinks],
+    }),
+  },
   integrations: [
     starlight({
       title: "Agent Harness 学习指南",

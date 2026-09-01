@@ -125,6 +125,7 @@ F01 覆盖三家框架的全部 9 篇页面（overview / run-lifecycle / tools �
 | S12 | 替换发布（B-002 Phase 3） | `已完成` | workflow 已切换到 `site-starlight/` 构建并部署成功（commit aa5ccb5）；根路径 redirect 验证通过；不维护旧路由重定向。 | 2026-08-24 |
 | S14 | Pi Design 延伸阅读 | `已完成` | `10-extended/pi-design/` 新增 5 篇：harness v1/v2 完整翻译、两篇教程式解析和版本差异分析；55 页构建成功，链接检查通过。 | 2026-08-26 |
 | S13 | 中文排版精修与正文 aside 改造 | `进行中` | CSS 排版精修已部署（中文字体栈、标题层级、行高间距）；正文 aside 改造完成 20/48 篇（P0 核心概念 4 篇 + P1 机制 16 篇）。剩余：P2 框架 9 篇、P2 对比实验 10 篇、P3 案例/面试/评估 7 篇、根目录 2 篇。 | 2026-08-25 |
+| S15 | 教程 .md 链接 404 根因分析与修复（B+C） | `已完成（待推送部署验证）` | 根因：教程内 399 个内链为 `.md` 相对路径，Starlight 对链接零转换，页面为目录式 URL，线上点击 404；旧 check-links 只查源文件存在性。修复：新增 rehype 插件构建期重写 `.md` 链接为带 base 的页面 URL；`astro.config` 改用 `markdown.processor: unified()`；`check-links.mjs` 升级为源码+构建产物两阶段校验。本地验证：dist `.md` 残留 0、0 断链、preview 全 200、注入断链可被拦截。详见会话记录 2026-09-01-link-404-rootcause-analysis。 | 2026-09-01 |
 
 ## 当前优先级队列
 
