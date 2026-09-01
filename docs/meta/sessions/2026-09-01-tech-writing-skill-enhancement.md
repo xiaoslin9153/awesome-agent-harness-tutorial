@@ -45,13 +45,34 @@
 5. 向用户给出诊断、覆盖矩阵与改进清单，用户批准按 P0+P1 落地。
 6. 修改 `SKILL.md`：新增「中英边界」、Review 检查项、适用范围权威关系说明。
 7. 更新 `progress-tracker.md` G20 行。
+8. 提交 `5fbd1a9`（docs: add 中英边界 rules to tutorial-tech-writing skill）并推送。
+9. 试点润色 `tutorial/zh-CN/03-frameworks/reasonix/overview.md`：按中英边界规则清理 15 处源码注释直译与半中半英句式，标识符统一反引号，`path:line` 锚点与 commit 原样保留；更新 Front Matter polish 记录。
+10. 提交 `2b924cb`（docs: polish reasonix overview per 中英边界 rules）并推送；启发式复检残留为 0（仅反引号内合法标识符），`check:links` 通过。
 
 ## 结果
 
 - `docs/skills/tutorial-tech-writing/SKILL.md` 已新增「中英边界」小节（4 条规则 + 正反例表），含术语首现英译、禁完整英文句、禁半中半英、源码注释翻译与 `path:line` 标注。
 - 「出版级 Review」新增第 7 条中英边界检查项。
 - 「适用范围」补充与 `writing-pipeline.md` 的权威关系。
-- 本次只改内部治理文档，不触发公开教材部署。
+- 试点 `reasonix/overview.md` 按新规则润色完成并已部署上线，页面含新译文、旧英文句已消失。
+- 本次改动含公开教材，已执行部署检查（见下）。
+
+## 部署检查
+
+```yaml
+deploy_check:
+  agent: main-agent
+  date: 2026-09-01
+  commit: 2b924cb
+  workflow_status: success
+  checks:
+    - path: /awesome-agent-harness-tutorial/
+      status: 200
+    - path: /awesome-agent-harness-tutorial/03-frameworks/reasonix/overview/
+      status: 200
+      contains: 前端保留原有调用签名
+  verdict: pass
+```
 
 ## 下一步
 
