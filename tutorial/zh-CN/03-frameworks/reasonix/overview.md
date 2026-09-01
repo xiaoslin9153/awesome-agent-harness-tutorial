@@ -14,9 +14,9 @@ learning_contract:
 review:
   polish:
     agent: main-agent
-    date: 2026-08-23
+    date: 2026-09-01
     verdict: pass
-    summary: 已统一 BuildResult/RuntimeSet/Owner、controller generation、write authority 和 provider-visible surface 术语。
+    summary: 已按中英边界规则清理源码注释直译与半中半英句式，标识符与术语统一用反引号；不新增事实，path:line 锚点与 commit 不变。
   implementation:
     agent: main-agent
     date: 2026-08-23
@@ -35,9 +35,9 @@ M-16 完成了机制层的注入防护。F-R1 要回答：这些机制在 Reason
 
 ## 本章解决什么矛盾
 
-CLI/TUI、桌面、Bot 和 ACP 都需要相同的回合语义、审批、取消和持久化；但它们的生命周期不同——桌面会重建标签页，Bot 会并发会话，ACP 会远端接入。Reasonix 的解法是把“运行时资源”从“控制器”中显式拆出又绑在一起：`BuildResult.Runtime` 持有 sidecar Manager，其 Close 被 chained into the controller's cleanup。
+CLI/TUI、桌面、Bot 和 ACP 都需要相同的回合语义、审批、取消和持久化；但它们的生命周期不同——桌面会重建标签页，Bot 会并发会话，ACP 会远端接入。Reasonix 的解法是把“运行时资源”从“控制器”中显式拆出又绑在一起：`BuildResult.Runtime` 持有 sidecar Manager，其 `Close` 被串联进控制器的清理链。
 
-直觉上这是“酒店房卡 + 行李托管”。精确机制是 runtime generation 计数器配对 CloseIfGeneration，使 stale cleanup 永远关不掉新一代资源。失效边界是：如果前端只拿 `Build` 返回的 Controller 而绕过 BuildResult，就必须依赖 cleanup chain 正确；直接管理子进程会破坏该假设。
+直觉上这是“酒店房卡 + 行李托管”。精确机制是 runtime generation（代次）计数器与 `CloseIfGeneration` 配对，让过期的清理永远关不掉新一代资源。失效边界是：如果前端只拿 `Build` 返回的 Controller 而绕过 BuildResult，就必须依赖清理链正确；直接管理子进程会破坏该假设。
 
 ## 架构分层
 
@@ -73,19 +73,19 @@ flowchart TD
 
 ## 启动装配与生命周期
 
-`BuildRuntime` 注释定义了它的两个产物：controller 和 extension kernel's frozen snapshot of the exact resources the build wired。快照从 build 自己产出的 in-hand objects 组装，never re-derives anything；assembly error 只降级为 nil Snapshot 加 warning，不让成功构建失败（`external/DeepSeek-Reasonix/internal/boot/runtime.go:88-98`）。
+`BuildRuntime` 的注释定义了它的两个产物：controller，以及扩展内核冻结的、本次构建实际接线资源的一份快照。快照由 build 自己产出的运行时对象组装，不再重新派生任何内容；装配错误只把快照降级为 nil 并给出警告，不会让一次成功构建失败（`external/DeepSeek-Reasonix/internal/boot/runtime.go:88-98`）。
 
-`Build` 是兼容包装：frontends keep their existing signature；返回前不关闭 runtime set，而是 chained into the controller's cleanup，让 extension sidecars live exactly as long as their controller（`external/DeepSeek-Reasonix/internal/boot/runtime.go:100-115`）。
+`Build` 是兼容包装：前端保留原有调用签名；返回前不关闭 runtime set，而是把它串联进控制器的清理链，让扩展 sidecar 与所属控制器同生共死（`external/DeepSeek-Reasonix/internal/boot/runtime.go:100-115`）。
 
 `BuildResult` 则是完整的生命周期包：
 
 - `Controller`：控制面；
 - `Snapshot`：本代次冻结资源清单；
-- `Runtime`：closable set，持 sidecar Manager，Close chained into controller cleanup；
-- `Owner`：session-lineage lifecycle owner，独立构建独立 owner，RebuildFrom 复用旧 owner 使只有该 lineage 的旧代次 drain；
-- `Dispatcher`/`ExtensionUI`：冻结拦截链与 UI hub，经 SetExtensions/SetExtensionUI 绑回 controller（`external/DeepSeek-Reasonix/internal/boot/runtime.go:25-53`）。
+- `Runtime`：可关闭的资源集合，持有 sidecar Manager，`Close` 串联进控制器的清理链；
+- `Owner`：会话谱系（session-lineage）的生命周期所有者，独立构建对应独立 owner，`RebuildFrom` 复用旧 owner，让只有该谱系的旧代次排空（drain）；
+- `Dispatcher`/`ExtensionUI`：冻结拦截链与 UI hub，经 `SetExtensions`/`SetExtensionUI` 绑回 controller（`external/DeepSeek-Reasonix/internal/boot/runtime.go:25-53`）。
 
-进程级保障是 `runtimeGeneration`：The first build gets generation 1 so 0 can mean "no snapshot"；generations pair with RuntimeSet.CloseIfGeneration so stale cleanup can never close a newer runtime's resources（`external/DeepSeek-Reasonix/internal/boot/runtime.go:78-86`）。这回答了“桌面重建标签页”场景：旧代次的清理不会误杀新代次。
+进程级保障是 `runtimeGeneration`：第一次构建得到 generation 1，因此 0 可以表示“无快照”；代次与 `RuntimeSet.CloseIfGeneration` 配对，让过期的清理永远不会关掉新一代运行时持有的资源（`external/DeepSeek-Reasonix/internal/boot/runtime.go:78-86`）。这回答了“桌面重建标签页”场景：旧代次的清理不会误杀新代次。
 
 ```mermaid
 sequenceDiagram
@@ -104,7 +104,7 @@ sequenceDiagram
 
 ## 控制面：Controller
 
-`Controller` 的注释自述职责：drives one chat session. Construct with New; drive with the command methods; observe through the Sink passed in Options（`external/DeepSeek-Reasonix/internal/control/controller.go:93-95`）。关键字段揭示了它聚合的横切能力：
+`Controller` 的注释自述职责：驱动一次对话会话。用 `New` 构造，用命令方法驱动，通过传入 `Options` 的 `Sink` 观察输出（`external/DeepSeek-Reasonix/internal/control/controller.go:93-95`）。关键字段揭示了它聚合的横切能力：
 
 - `runner`/`executor`：执行核（单模型或双模型路径）；
 - `recoveryGate`：共享 Auto Guard 状态；
@@ -117,41 +117,41 @@ sequenceDiagram
 
 ## 执行核：Agent
 
-`Agent` 的注释把它定位为 drives a single task: a Provider, a tool Registry, and a Session wired into the main loop（`external/DeepSeek-Reasonix/internal/agent/agent.go:280-288`）。结构上的几个设计点值得注意：
+`Agent` 的注释把它定位为：驱动单个任务，把一个 Provider、一个工具 Registry 和一个 Session 接进主循环（`external/DeepSeek-Reasonix/internal/agent/agent.go:280-288`）。结构上的几个设计点值得注意：
 
-1. **planMode 是协作开关不是安全边界**：注释强调 It does not replace the permission or sandbox boundary，且切换时不改 system prompt/tool list，以保住 provider-cache prefix（`:300-303`）。
-2. **readOnlyExecution 是构造期防御**： Unlike planMode it is not a collaboration toggle，planner/research agent 全生命周期保持，并在 proxy resolve 后复查（`:305-308`）。
-3. **mutationDependencyBarrier**：记录本批次第一个失败/被阻的 durable-state write；executeOne 在 proxy 解析后复查，防止 use_capability 用 schema-level ReadOnly 绕过屏障；cause 对象 immutable 且不含 args/paths（`:310-315`）。
-4. **unwrittenResolve 存放在 Agent 而非 sessionRuntime**：failed state write 欠下的 resolve watermark 要 outlive conversation（`:296-298`）。
+1. **planMode 是协作开关不是安全边界**：注释强调它不替代权限或沙箱边界，且切换时不改 system prompt / 工具列表，以保住 provider 缓存前缀（`:300-303`）。
+2. **readOnlyExecution 是构造期防御**：与 planMode 不同，它不是协作开关；planner / research agent 在整个生命周期保持，并在 proxy 解析后复查（`:305-308`）。
+3. **mutationDependencyBarrier**：记录本批次第一个失败或受阻的持久状态写入；`executeOne` 在 proxy 解析后复查，防止 `use_capability` 用 schema 级只读绕过屏障；cause 对象不可变，且不含参数或路径（`:310-315`）。
+4. **unwrittenResolve 存放在 Agent 而非 sessionRuntime**：失败的状态写入欠下的 resolve 水位线必须比一次会话活得更久（`:296-298`）。
 
-这些字段把第二章的机制（plan/read-only 区分、mutation barrier、状态欠账）落到了结构归属上。
+这些字段把第二章的机制（plan/read-only 区分、`mutation barrier`、状态欠账）落到了结构归属上。
 
 ## Provider 抽象
 
-`Provider` 接口刻意极小：Name + Stream(ctx, Request) (<-chan Chunk, error)。契约写在注释里：Cancelling ctx must abort the underlying request; a closed channel marks the end of the completion（`external/DeepSeek-Reasonix/internal/provider/provider.go:952-960`）。
+`Provider` 接口刻意极小：Name + Stream(ctx, Request) (<-chan Chunk, error)。契约写在注释里：取消 ctx 必须中止底层请求；通道关闭表示本次生成结束（`external/DeepSeek-Reasonix/internal/provider/provider.go:952-960`）。
 
-协议差异通过可选接口表达，例如 `ToolCallReasoningPolicy`：针对 DeepSeek thinking 这类会在 tool_calls 回合 replay reasoning_content 的后端，Agent 用它归档原始 reasoning 文本并检测缺失轮次（`:962-975`）。大多数 provider 保持 unset，callers must treat it as false——这是“小接口 + 能力探测”的典型 Go 风格。
+协议差异通过可选接口表达，例如 `ToolCallReasoningPolicy`：针对 DeepSeek thinking 这类会在 tool_calls 回合 replay reasoning_content 的后端，Agent 用它归档原始 reasoning 文本并检测缺失轮次（`:962-975`）。大多数 provider 保持 unset，调用方必须按 false 处理——这是“小接口 + 能力探测”的典型 Go 风格。
 
 ## 会话状态与写权限
 
-`Session` 是权威对话历史，锁策略写在注释里：run-loop goroutine is the only writer，但 frontend 可从另一 goroutine 读 History/Save，因此 mu guards Messages；run-loop 内的直接读保持 lock-free，跨 goroutine 走 Snapshot（`external/DeepSeek-Reasonix/internal/agent/session.go:15-21`）。
+`Session` 是权威对话历史，锁策略写在注释里：run 循环的 goroutine 是唯一写者，但前端可以从另一个 goroutine 读 `History`/`Save`，因此 `mu` 保护 `Messages`；run 循环内的直接读保持无锁，跨 goroutine 一律走 `Snapshot`（`external/DeepSeek-Reasonix/internal/agent/session.go:15-21`）。
 
 版本三件套各司其职：
 
 - `version uint64`：普通追加水位；
-- `rewriteVersion int`：每次 log rewritten (compact/fold) 时递增；
-- `persistedRewriteVersion`：highest rewriteVersion whose transcript has fully reached disk，且存于 Session 而非 controller——swapping session objects can never orphan or misattribute the baseline；save 时在 s.mu 下捕获 rewriteVersion 与 message snapshot，compaction landing mid-save stays unpersisted（`:22-31`）。
+- `rewriteVersion int`：每次日志被重写（compact/fold）时递增；
+- `persistedRewriteVersion`：记录转录已完整落盘的 `rewriteVersion` 上限，且存于 Session 而非 controller——这样替换 session 对象永远不会让基线失效或错配；保存时在 `s.mu` 下捕获 `rewriteVersion` 与消息快照，保存中途落地的压缩不会被误认为已持久化（`:22-31`）。
 
-损坏与修复字段同样显式：`normalizedDirty` 表示 LoadSession 已修复 empty tool-call names/dangling calls/truncated args，下一次 Save 自动固化；`eventLogDamaged` 表示 event log torn/corrupt，已取回 replayable prefix 或 .jsonl checkpoint，next save heals with rewrite-and-compact；`rawMessages` 保留修复前转录供 checkpoint 比对（`:33-48`）。
+损坏与修复字段同样显式：`normalizedDirty` 表示 `LoadSession` 已修复空工具调用名、悬空调用和截断参数，下一次 `Save` 自动固化；`eventLogDamaged` 表示事件日志撕裂或损坏，已取回可重放前缀或 `.jsonl` checkpoint，下一次保存用重写并压缩来修复；`rawMessages` 保留修复前的转录，供 checkpoint 比对（`:33-48`）。
 
-写权限则升级为对象：`writeAuth *SessionWriteAuthority` 由 Controller 在获得 SessionLease 后绑定，save/ownership paths consult it instead of a process-level boolean；一旦 bind 过 authority，saves fail closed without a live authority，避免 stale controller fork recovery；`recoveryLane` 保证 replacement controller 不能覆盖同一 recovery file（`:62-77`）。这与 M-10 的 CAS/save-verified baseline 共同构成持久化安全网。
+写权限则升级为对象：`writeAuth *SessionWriteAuthority` 由 Controller 在获得 `SessionLease` 后绑定，保存与所有权路径都查询它，而不是进程级布尔值；一旦绑定过 authority，没有存活 authority 时保存一律失败（fail closed），避免过期的 controller 分叉恢复；`recoveryLane` 保证替换后的 controller 不能覆盖同一恢复文件（`:62-77`）。这与 M-10 的 CAS/save-verified baseline 共同构成持久化安全网。
 
 ## 工具面
 
-`Registry` 是 per-run set：enabled built-ins plus plugin tools；Agent 只见 Registry，不见全局 builtins（`external/DeepSeek-Reasonix/internal/tool/tool.go:1-4,281-295`）。两个关键分离：
+`Registry` 是每次运行独享的集合：启用内置工具加插件工具；Agent 只看到 Registry，看不到全局内置工具（`external/DeepSeek-Reasonix/internal/tool/tool.go:1-4,281-295`）。两个关键分离：
 
-1. **provider-visible vs executable**：`SetProviderVisibleTools` 只限制 Schemas 导出，Get/Execute 仍可达全部注册工具，供 use_capability dispatch（`:287-330`）；
-2. **stable schema order**：`Schemas()` 按 name order 导出可见工具，稳定顺序保护 prompt cache（`:609-635`）。
+1. **provider-visible vs executable**：`SetProviderVisibleTools` 只限制导出到 provider 的 Schemas，`Get`/`Execute` 仍可达全部注册工具，供 `use_capability` 派发（`:287-330`）；
+2. **stable schema order**：`Schemas()` 按名称顺序导出可见工具，稳定顺序保护 prompt 缓存（`:609-635`）。
 
 执行侧的 parse→policy→prepare→finish、mutation barrier 和取消填充已在 F-R2/M-04 核对；本章只需确认入口收敛于 Registry。
 
